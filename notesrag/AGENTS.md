@@ -15,19 +15,11 @@ Read this file fully before writing any code.
    criteria are met and its tests pass.** Phase 1 has no tests yet
    (that's Phase 2's job) — build the feature, then Phase 2 covers it
    with tests before anything else continues.
-3. **Respect the frontend/backend split.** The frontend and backend now
-   live in one repo. The frontend (`app/layout.tsx`, `app/page.tsx`,
-   `app/globals.css`, `app/error.tsx`, `app/not-found.tsx`,
-   `components/`, `hooks/`, `lib/utils.ts`, `lib/notes-rag-api.ts`,
-   `public/`, `components.json`, `postcss.config.mjs`, Tailwind theme)
-   was migrated in from Lovable and is **behaviorally frozen** — don't
-   restyle, rename, or restructure it. Backend phase work touches only
-   `app/api/`, the backend modules in `lib/` (`supabase.ts`,
-   `openrouter.ts`, `chunking.ts`, `retrieval.ts`, `tools.ts`), `db/`,
-   `tests/`, and `scripts/`. The API contract in `docs/api-contract.md`
-   is fixed — don't change route shapes or response fields without
-   flagging it to the user first, since the frontend was built against
-   that exact contract.
+3. **Don't touch the frontend.** The UI is generated separately via
+   Lovable. Only implement API routes, `lib/`, `db/`, and `tests/`. The
+   API contract in `docs/api-contract.md` is fixed — don't change route
+   shapes or response fields without flagging it to the user first,
+   since the frontend was built against that exact contract.
 4. **Keep Phase 1 simple.** No agent loops, no tool calling, no
    reranking — just a straight retrieve-then-generate pipeline. Resist
    adding robustness or abstractions that belong to a later phase.
