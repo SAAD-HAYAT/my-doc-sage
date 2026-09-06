@@ -152,7 +152,7 @@ export function ChatPanel({
             />
             <PromptInputFooter className="justify-end">
               <PromptInputSubmit
-                status={sending ? "submitted" : undefined}
+                {...(sending ? { status: "submitted" as const } : {})}
                 disabled={!hasDocuments || sending}
               />
             </PromptInputFooter>
