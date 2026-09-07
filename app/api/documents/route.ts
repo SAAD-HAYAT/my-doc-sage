@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractText, getDocumentProxy } from "unpdf";
 import { supabase } from "@/lib/supabase";
-import { chunkText } from "@/lib/chunking";
+import { chunkText, countTokens, splitToTokenLimit, MAX_EMBED_TOKENS } from "@/lib/chunking";
 import { embed } from "@/lib/openrouter";
 
 // unpdf bundles pdf.js, which needs the Node.js runtime (not Edge).
@@ -80,10 +80,24 @@ export async function POST(req: NextRequest) {
   // 2. Extract -> chunk -> embed -> store. On any failure, mark "failed".
   try {
     const text = await extractRawText(file);
-    const chunks = chunkText(text);
+    const baseChunks = chunkText(text);
 
-    if (chunks.length === 0) {
+    if (baseChunks.length === 0) {
       throw new Error("No extractable text found in the file");
+    }
+
+    // Safety net: token-count each chunk again right before embedding and
+    // recursively halve anything still over the limit, so we never hand
+    // OpenRouter an input it will reject. Should be rare after chunkText().
+    const chunks: string[] = [];
+    for (const chunk of baseChunks) {
+      const safe = splitToTokenLimit(chunk);
+      if (safe.length > 1) {
+        console.warn(
+          `[ingestion] chunk of ${countTokens(chunk)} tokens exceeded ${MAX_EMBED_TOKENS}; split into ${safe.length} pieces`,
+        );
+      }
+      chunks.push(...safe);
     }
 
     const rows = [];
@@ -106,6 +120,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(shape(updated as DocumentRow));
   } catch (err) {
+    // Leave a clean state: drop any chunks already inserted for this
+    // document before flipping to "failed", so a retry starts from zero.
+    await supabase.from("chunks").delete().eq("document_id", doc.id);
     await supabase.from("documents").update({ status: "failed" }).eq("id", doc.id);
     console.error(`Document ingestion failed for ${doc.id}:`, err);
     return NextResponse.json(shape({ ...doc, status: "failed" }));
