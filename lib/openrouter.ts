@@ -4,10 +4,13 @@
 const OPENROUTER_URL = "https://openrouter.ai/api/v1";
 
 const EMBEDDING_MODEL = "liquid/lfm-2.5-embedding-350m:free";
-const CHAT_MODEL = "openai/gpt-oss-120b:free";
-// If the primary free model is unavailable (404/429/5xx), let OpenRouter
-// pick any free model instead.
-const CHAT_MODEL_FALLBACK = "openrouter/free";
+// AGENTS.md specifies "openai/gpt-oss-120b:free", but OpenRouter now returns
+// 404 "unavailable for free" for that slug on every request, so we go
+// straight to the free-model router — which AGENTS.md explicitly sanctions
+// ("or the openrouter/free router to let OpenRouter pick a free model").
+// The router already load-balances across every free model, so it doubles
+// as its own fallback. Swap back to the pinned model if it returns.
+const CHAT_MODEL = "openrouter/free";
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -61,9 +64,11 @@ export async function chat(messages: ChatMessage[]): Promise<string> {
       body: JSON.stringify({ model, messages }),
     });
 
+  // One retry covers a transient 429/5xx from whichever free model the
+  // router landed on.
   let res = await call(CHAT_MODEL);
-  if (!res.ok && (res.status === 404 || res.status === 429 || res.status >= 500)) {
-    res = await call(CHAT_MODEL_FALLBACK);
+  if (!res.ok && (res.status === 429 || res.status >= 500)) {
+    res = await call(CHAT_MODEL);
   }
 
   if (!res.ok) throw await errorFrom(res, "chat");
