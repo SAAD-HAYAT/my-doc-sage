@@ -32,6 +32,10 @@ export async function retrieve(query: string, k = 5): Promise<RetrievedChunk[]> 
   return ((data ?? []) as MatchChunkRow[]).map((row) => ({
     documentName: row.document_name,
     chunkText: row.content,
-    score: row.similarity,
+    // match_chunks returns raw cosine similarity, which is mathematically
+    // [-1, 1]; near-orthogonal chunks come back slightly negative. The API
+    // contract (and the frontend's "N% match") expects 0-1, so clamp the
+    // floor. Ordering is unaffected — negatives are already the weakest hits.
+    score: Math.max(0, row.similarity),
   }));
 }

@@ -41,7 +41,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, body || `Request failed (${res.status})`);
   }
-  return (await res.json()) as T;
+  // 204 No Content (e.g. DELETE) has an empty body — don't try to parse it.
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const documentsApi = {
