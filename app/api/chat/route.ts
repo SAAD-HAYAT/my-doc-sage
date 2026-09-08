@@ -41,11 +41,35 @@ export async function POST(req: NextRequest) {
             .join("\n\n")
         : "(no relevant context found in the uploaded notes)";
 
+    // Conversation memory: pull the last few turns of this session so the
+    // model can resolve follow-ups ("who leads that?"). Same source as
+    // GET /api/chat/[sessionId]; capped at 10 messages (~5 exchanges) to
+    // keep token usage bounded. Fetch newest-first + limit, then flip to
+    // chronological order. The current message isn't persisted yet, so it
+    // won't appear here — it's appended explicitly below.
+    const { data: priorRows, error: historyError } = await supabase
+      .from("messages")
+      .select("role, content")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (historyError) {
+      throw new Error(`Could not load session history: ${historyError.message}`);
+    }
+
+    const priorMessages: ChatMessage[] = (priorRows ?? [])
+      .reverse()
+      .map((row) => ({
+        role: row.role as "user" | "assistant",
+        content: row.content,
+      }));
+
     const messages: ChatMessage[] = [
       { role: "system", content: `${SYSTEM_PROMPT}\n\nContext:\n${context}` },
+      ...priorMessages,
       { role: "user", content: message },
     ];
-
     const answer = await chat(messages);
 
     // Persist the exchange. User message first, then the assistant reply,
