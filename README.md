@@ -1,78 +1,54 @@
-# DocuChat Interface
+# NotesRAG — Personal RAG Portfolio Project
 
-Build a clean, minimal chat interface for a personal RAG (Retrieval-Augmented
+A personal knowledge-base chatbot: upload your notes (PDF/Markdown), ask
+questions, get answers grounded in your own documents.
 
-Generation) app called "NotesRAG" — a chatbot that answers questions using my
+## Stack
 
-own uploaded documents.
+- **Frontend**: Next.js (App Router) + TypeScript + Tailwind v4 + shadcn/ui —
+  originally generated via Lovable, now migrated into this repo (see
+  `docs/api-contract.md` for the exact prompt and the contract it expects)
+- **Backend**: Next.js API routes (`app/api/`)
+- **Database + vector store**: Supabase (Postgres + pgvector)
+- **LLM + embeddings**: OpenRouter (free-tier models)
 
-Stack: Next.js (App Router) + TypeScript + Tailwind CSS + shadcn/ui. Do NOT
+## How this repo is organized
 
-generate any backend logic, database, or Supabase integration — this is
+The backend is built in six phases, each documented in `docs/phase-N-*.md`.
+Every phase doc has a goal, a task list, files to touch, and acceptance
+criteria. Build them **in order**.
 
-frontend-only, wired to a REST API I'm building separately.
+| Phase | Focus |
+|---|---|
+| 1 | Basic RAG loop (ingest → embed → store → retrieve → generate) |
+| 2 | Testing foundation (Vitest + CI) |
+| 3 | Tool calling |
+| 4 | Agentic loop (ReAct-style retrieval) |
+| 5 | Advanced retrieval (hybrid search, reranking, citations) |
+| 6 | Eval harness |
 
-Layout:
+If you're using an AI coding agent (Claude Code, Cursor, etc.) to help build
+this, point it at `AGENTS.md` first — it has the ground rules.
 
-- Left sidebar (collapsible on mobile):
+## Project layout
 
-  - "Upload" button/drop zone accepting PDF and Markdown files
-
-  - List of uploaded documents showing name + status badge (Processing / Ready / Failed)
-
-  - Delete icon per document
-
-- Main panel: chat interface
-
-  - Scrollable message history, user messages right-aligned, assistant messages left-aligned
-
-  - Each assistant message has a small collapsible "Sources" section listing which
-
-    documents/chunks were used
-
-  - Message input at the bottom with a send button, disabled while a response is loading
-
-  - Empty state when no documents are uploaded yet, prompting to upload first
-
-- Top bar: app name + a "New chat" button that clears the current session
-
-Wire the UI to these exact REST endpoints (I'll implement the backend — just
-
-call them and handle loading/error states):
-
-- POST /api/documents (multipart file upload) -> { id, name, status, createdAt }
-
-- GET /api/documents -> array of the above
-
-- DELETE /api/documents/:id
-
-- POST /api/chat  body: { message, sessionId } -> { answer, sources: [{ documentName, chunkText, score }] }
-
-- GET /api/chat/:sessionId -> array of { role, content, sources, createdAt }
-
-Use local React state/hooks — no global store needed. Styling: minimal and
-
-modern, neutral colors, rounded corners, similar feel to a simple ChatGPT-style
-
-UI. No auth needed yet.
-
-This project was built with [Lovable](https://lovable.dev).
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/15544033-8fd5-495c-9651-f396ef2fe88b).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
-
-## Development
-
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
-
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
 ```
+app/
+  layout.tsx, page.tsx, globals.css   frontend (client-rendered)
+  error.tsx, not-found.tsx
+  api/                                backend route handlers
+components/   ui/ (shadcn), ai-elements/, notes-rag/
+hooks/
+lib/          utils.ts, notes-rag-api.ts (frontend) + backend logic
+db/           schema.sql
+docs/         api-contract.md + phase docs
+tests/        Vitest suites
+scripts/      eval.ts
+```
+
+## Setup
+
+1. `npm install`
+2. Copy `.env.example` to `.env.local` and fill in your Supabase + OpenRouter keys
+3. Run `db/schema.sql` against your Supabase project (SQL editor, or `supabase db push`)
+4. `npm run dev`

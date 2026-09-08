@@ -1,0 +1,7 @@
+[
+  {
+    "question": "Replace me with a real question about your own notes",
+    "expectedChunkId": "fill-in-once-you-have-real-chunk-ids",
+    "expectedAnswerContains": "a phrase you expect in a correct answer"
+  }
+]

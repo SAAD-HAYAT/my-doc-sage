@@ -7,18 +7,29 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
-dist
-dist-ssr
-.output
-.vinxi
-.tanstack/**
-.nitro
-*.local
 
-# Wrangler / Cloudflare
-.wrangler/
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Production
+build
+dist
+
+# Env
+.env
+.env*.local
+*.local
 .dev.vars
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
 
 # Editor directories and files
 .vscode/*
