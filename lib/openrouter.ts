@@ -4,13 +4,41 @@
 const OPENROUTER_URL = "https://openrouter.ai/api/v1";
 
 const EMBEDDING_MODEL = "liquid/lfm-2.5-embedding-350m:free";
-// AGENTS.md specifies "openai/gpt-oss-120b:free", but OpenRouter now returns
-// 404 "unavailable for free" for that slug on every request, so we go
-// straight to the free-model router — which AGENTS.md explicitly sanctions
-// ("or the openrouter/free router to let OpenRouter pick a free model").
-// The router already load-balances across every free model, so it doubles
-// as its own fallback. Swap back to the pinned model if it returns.
-const CHAT_MODEL = "openrouter/free";
+
+// AGENTS.md specifies "openai/gpt-oss-120b:free" (dead, 404s on every
+// request) or, failing that, the bare "openrouter/free" router. We stopped
+// using the bare router: it load-balances across OpenRouter's ENTIRE free
+// pool, which includes non-conversational models — confirmed live via
+// temporary response logging that it can land on
+// "nvidia/nemotron-3.5-content-safety:free", a 4B moderation classifier
+// whose entire output is a verdict like "User Safety: safe" instead of an
+// answer. There's no way to exclude specific models from the bare router,
+// so instead we maintain our own ordered list of known-general-purpose
+// instruct models and try them in order, falling back on any failure.
+//
+// Pulled from OpenRouter's live /api/v1/models free-tier list (these
+// rotate — none of the previously-assumed Llama/Qwen/Mistral free slugs
+// were even present at the time of writing). Picked for explicit
+// "instruction-tuned" / general-purpose positioning, spread across three
+// providers, and each verified live to answer real questions correctly
+// (see the investigation notes in git history for this change):
+const CHAT_MODELS = [
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "liquid/lfm-2.5-2.6b:free",
+];
+
+// Narrow guard against the exact failure mode above: a response that is
+// ENTIRELY a bare safety/moderation verdict, nothing else. Deliberately
+// anchored (^...$) so it can never match a real answer that merely
+// mentions "safe" in passing.
+const SAFETY_VERDICT_ONLY =
+  /^(?:(?:user|content)\s+safety\s*[:\-]\s*)?(?:safe|unsafe)\.?$/i;
+
+function isSafetyVerdictOnly(content: string): boolean {
+  return SAFETY_VERDICT_ONLY.test(content.trim());
+}
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -64,23 +92,46 @@ export async function chat(messages: ChatMessage[]): Promise<string> {
       body: JSON.stringify({ model, messages }),
     });
 
-  // One retry covers a transient 429/5xx from whichever free model the
-  // router landed on.
-  let res = await call(CHAT_MODEL);
-  if (!res.ok && (res.status === 429 || res.status >= 500)) {
-    res = await call(CHAT_MODEL);
+  let lastError: Error = new Error("No chat models were tried");
+
+  for (const model of CHAT_MODELS) {
+    let res: Response;
+    try {
+      res = await call(model);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      continue;
+    }
+
+    if (!res.ok) {
+      lastError = await errorFrom(res, `chat (${model})`);
+      continue;
+    }
+
+    const json = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const content = json.choices?.[0]?.message?.content;
+
+    if (typeof content !== "string" || content.trim() === "") {
+      lastError = new Error(
+        `OpenRouter chat (${model}) returned no content: ${JSON.stringify(json).slice(0, 500)}`,
+      );
+      continue;
+    }
+
+    if (isSafetyVerdictOnly(content)) {
+      console.warn(
+        `[chat] ${model} returned a bare safety-verdict response ("${content.trim()}") instead of an answer; trying the next fallback model.`,
+      );
+      lastError = new Error(
+        `OpenRouter chat (${model}) returned a non-conversational verdict: "${content.trim()}"`,
+      );
+      continue;
+    }
+
+    return content;
   }
 
-  if (!res.ok) throw await errorFrom(res, "chat");
-
-  const json = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = json.choices?.[0]?.message?.content;
-  if (typeof content !== "string") {
-    throw new Error(
-      `OpenRouter chat returned no content: ${JSON.stringify(json).slice(0, 500)}`,
-    );
-  }
-  return content;
+  throw lastError;
 }
