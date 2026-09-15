@@ -47,7 +47,9 @@ Read this file fully before writing any code.
 ## Environment variables
 
 See `.env.example`. You'll need `OPENROUTER_API_KEY`, `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`.
+`SUPABASE_SERVICE_ROLE_KEY`. `OPENROUTER_API_KEY_2` is optional — a
+second account's key that `lib/openrouter.ts` automatically switches to
+once the primary key's free-tier daily quota is exhausted (a 429).
 
 ## Where to start
 
