@@ -10,3 +10,13 @@ jobs:
           node-version: 20
       - run: npm install
       - run: npm test
+        env:
+          # Defensive fallback only: every network call (OpenRouter,
+          # Supabase) is mocked in tests/. If a mocking gap ever lets a
+          # real module load for real, lib/supabase.ts's fail-fast check
+          # and any live API call should fail loudly on these placeholder
+          # values instead of silently hitting a rate-limited free API
+          # from CI.
+          OPENROUTER_API_KEY: placeholder-not-a-real-key
+          SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: placeholder-not-a-real-key
