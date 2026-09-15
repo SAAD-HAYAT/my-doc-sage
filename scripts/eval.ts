@@ -19,6 +19,16 @@
 //
 // Uses relative imports (not the "@/..." alias) deliberately: this file
 // runs directly via `tsx`, not through Next's/Vitest's alias resolution.
+//
+// Phase 7 (auth): retrieve()/runAgentLoop() now require a userId (every
+// row is per-user). This script has no session/cookies to read one from
+// -- it needs the target user's real auth.users UUID via the EVAL_USER_ID
+// env var (put it in .env; find it via Supabase's dashboard >
+// Authentication > Users after signing in once). NOTE: eval-set.json's
+// expectedChunkId values are tied to whichever user actually owns those
+// chunks -- if documents are wiped and re-uploaded under a different (or
+// newly-created) account, the fixture needs regenerating against the new
+// chunk ids.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -27,7 +37,7 @@ import "./load-env"; // must run before any import that reads process.env
 import type { ChatMessage } from "../lib/openrouter";
 import { runAgentLoop } from "../lib/agent";
 import { retrieve } from "../lib/retrieval";
-import { supabase } from "../lib/supabase";
+import { supabaseAdmin } from "../lib/supabase";
 import { tools } from "../lib/tools";
 
 export type EvalCase = {
@@ -62,25 +72,25 @@ const SYSTEM_PROMPT =
   "— if the notes don't contain enough information after searching, say so plainly.";
 
 async function resolveExpectedChunkText(chunkId: string): Promise<string> {
-  const { data, error } = await supabase.from("chunks").select("content").eq("id", chunkId).single();
+  const { data, error } = await supabaseAdmin.from("chunks").select("content").eq("id", chunkId).single();
   if (error || !data) {
     throw new Error(`Could not resolve expectedChunkId "${chunkId}": ${error?.message ?? "no such chunk"}`);
   }
   return (data as { content: string }).content;
 }
 
-export async function evaluateCase(testCase: EvalCase): Promise<EvalCaseResult> {
+export async function evaluateCase(testCase: EvalCase, userId: string): Promise<EvalCaseResult> {
   try {
     const expectedChunkText = await resolveExpectedChunkText(testCase.expectedChunkId);
 
-    const retrieved = await retrieve(testCase.question, RETRIEVAL_K);
+    const retrieved = await retrieve(testCase.question, userId, RETRIEVAL_K);
     const retrievalHit = retrieved.some((r) => r.chunkText === expectedChunkText);
 
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: testCase.question },
     ];
-    const { answer } = await runAgentLoop(messages, tools);
+    const { answer } = await runAgentLoop(messages, tools, userId);
 
     const faithful = answer.toLowerCase().includes(testCase.expectedAnswerContains.toLowerCase());
 
@@ -151,14 +161,14 @@ function printReport(results: EvalCaseResult[]): void {
   console.log(`Faithfulness rate:   ${faithfulnessRate.toFixed(1)}% (${faithful}/${evaluatedCount} evaluated)`);
 }
 
-export async function runEval(fixturePath: string, limit?: number): Promise<EvalCaseResult[]> {
+export async function runEval(fixturePath: string, userId: string, limit?: number): Promise<EvalCaseResult[]> {
   const allCases = loadEvalSet(fixturePath);
   const cases = typeof limit === "number" ? allCases.slice(0, limit) : allCases;
 
   const results: EvalCaseResult[] = [];
   for (const testCase of cases) {
     console.log(`Running: ${testCase.question}`);
-    results.push(await evaluateCase(testCase));
+    results.push(await evaluateCase(testCase, userId));
   }
 
   printReport(results);
@@ -169,9 +179,17 @@ const isMainModule =
   process.argv[1] !== undefined && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isMainModule) {
+  const userId = process.env.EVAL_USER_ID;
+  if (!userId) {
+    console.error(
+      "Missing EVAL_USER_ID -- set it in .env to the auth.users UUID that owns the fixture's documents " +
+        "(Supabase dashboard > Authentication > Users).",
+    );
+    process.exit(1);
+  }
   const fixturePath = path.resolve(process.cwd(), "tests/fixtures/eval-set.json");
   const limit = process.env.EVAL_LIMIT ? Number.parseInt(process.env.EVAL_LIMIT, 10) : undefined;
-  runEval(fixturePath, limit).catch((err) => {
+  runEval(fixturePath, userId, limit).catch((err) => {
     console.error("Eval run failed:", err);
     process.exit(1);
   });

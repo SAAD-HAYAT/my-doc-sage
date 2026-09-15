@@ -4,9 +4,14 @@
 // full-text search via reciprocal rank fusion (RRF). Reranking (a local
 // cross-encoder) was tried and rejected here -- see
 // docs/phase-5-advanced-retrieval.md's Results Log for why.
+// Phase 7: added a required `userId`, threaded straight into the
+// hybrid_search RPC's p_user_id param -- this call goes through
+// supabaseAdmin (the service-role client, see lib/supabase.ts), which
+// bypasses RLS entirely, so filtering here in the query itself is the
+// ONLY thing standing between one user's search and another user's notes.
 
 import { embed } from "./openrouter";
-import { supabase } from "./supabase";
+import { supabaseAdmin } from "./supabase";
 
 export type RetrievedChunk = {
   documentName: string;
@@ -45,12 +50,13 @@ function rrfContribution(rank: number | null): number {
 // its own #1 result.
 const MAX_RRF_SCORE = 2 / (RRF_K + 1);
 
-export async function retrieve(query: string, k = 5): Promise<RetrievedChunk[]> {
+export async function retrieve(query: string, userId: string, k = 5): Promise<RetrievedChunk[]> {
   const vector = await embed(query);
 
-  const { data, error } = await supabase.rpc("hybrid_search", {
+  const { data, error } = await supabaseAdmin.rpc("hybrid_search", {
     query_embedding: vector,
     query_text: query,
+    p_user_id: userId,
     match_count: CANDIDATE_POOL,
   });
 

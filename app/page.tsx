@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { PanelLeft, RotateCcw } from "lucide-react";
+import { LogOut, PanelLeft, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DocumentSidebar } from "@/components/notes-rag/document-sidebar";
 import { ChatPanel } from "@/components/notes-rag/chat-panel";
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
   chatApi,
   documentsApi,
@@ -118,6 +119,15 @@ export default function Index() {
     setSessionId(newSessionId());
   }, []);
 
+  // Phase 7 (auth): full navigation (not client-side router push) after
+  // sign-out, so middleware.ts re-evaluates the now-cleared session on
+  // the next request rather than leaving stale client state around.
+  const handleLogout = useCallback(async () => {
+    const supabase = createSupabaseBrowserClient();
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }, []);
+
   const hasReadyDocuments = documents.some((d) => d.status === "ready");
 
   return (
@@ -138,6 +148,10 @@ export default function Index() {
         <Button variant="outline" size="sm" onClick={handleNewChat}>
           <RotateCcw className="size-3.5" />
           New chat
+        </Button>
+        <Button variant="ghost" size="sm" onClick={handleLogout} aria-label="Log out">
+          <LogOut className="size-3.5" />
+          Log out
         </Button>
       </header>
 

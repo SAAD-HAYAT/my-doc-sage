@@ -15,6 +15,7 @@ const mockChat = vi.mocked(chat);
 const mockExecuteTool = vi.mocked(executeTool);
 
 const noTools: ToolDefinition[] = [];
+const TEST_USER_ID = "test-user-id";
 const initialMessages: ChatMessage[] = [
   { role: "system", content: "sys" },
   { role: "user", content: "q" },
@@ -47,11 +48,11 @@ describe("runAgentLoop", () => {
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const result = await runAgentLoop(initialMessages, noTools);
+    const result = await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     expect(mockExecuteTool).toHaveBeenCalledTimes(2);
-    expect(mockExecuteTool).toHaveBeenNthCalledWith(1, "search_notes", { query: "first thing" });
-    expect(mockExecuteTool).toHaveBeenNthCalledWith(2, "search_notes", { query: "second thing" });
+    expect(mockExecuteTool).toHaveBeenNthCalledWith(1, "search_notes", { query: "first thing" }, TEST_USER_ID);
+    expect(mockExecuteTool).toHaveBeenNthCalledWith(2, "search_notes", { query: "second thing" }, TEST_USER_ID);
 
     // 2 tool-calling iterations + 1 final-answer iteration + 1 self-check call.
     expect(mockChat).toHaveBeenCalledTimes(4);
@@ -76,7 +77,7 @@ describe("runAgentLoop", () => {
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = await runAgentLoop(initialMessages, noTools);
+    const result = await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     expect(mockChat).toHaveBeenCalledTimes(4);
     expect(mockExecuteTool).toHaveBeenCalledTimes(4);
@@ -94,7 +95,7 @@ describe("runAgentLoop", () => {
       .mockResolvedValueOnce("supported");
     mockExecuteTool.mockResolvedValueOnce([{ documentName: "n.md", chunkText: "c", score: 0.5 }]);
 
-    const result = await runAgentLoop(initialMessages, noTools);
+    const result = await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     expect(mockChat).toHaveBeenCalledTimes(3);
     expect(result).toEqual({
@@ -107,7 +108,7 @@ describe("runAgentLoop", () => {
   it("a direct answer with no tool calls skips the self-check entirely (nothing to ground against)", async () => {
     mockChat.mockResolvedValueOnce("just answering directly, no notes needed");
 
-    const result = await runAgentLoop(initialMessages, noTools);
+    const result = await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     expect(mockChat).toHaveBeenCalledTimes(1); // no self-check call: sources is empty
     expect(mockExecuteTool).not.toHaveBeenCalled();
@@ -127,7 +128,7 @@ describe("runAgentLoop", () => {
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = await runAgentLoop(initialMessages, noTools);
+    const result = await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     expect(result.answer).toBe("an answer that drifts from the notes");
     expect(result.groundednessWarning).toBe(true);
@@ -139,7 +140,7 @@ describe("runAgentLoop", () => {
   it("citations: injects a citation instruction after the caller's system message(s), before the first user turn", async () => {
     mockChat.mockResolvedValueOnce("direct answer");
 
-    await runAgentLoop(initialMessages, noTools);
+    await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     const sentMessages = mockChat.mock.calls[0][0];
     // initialMessages = [system, user] -> instruction lands at index 1.
@@ -161,7 +162,7 @@ describe("runAgentLoop", () => {
       .mockResolvedValueOnce("supported");
     mockExecuteTool.mockResolvedValueOnce([chunkA, chunkB]);
 
-    const result = await runAgentLoop(initialMessages, noTools);
+    const result = await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     // What the model actually reads as the numbered passage list...
     const followUpMessages = mockChat.mock.calls[1][0];
@@ -179,7 +180,7 @@ describe("runAgentLoop", () => {
     // initialMessages = [system, user] -- exactly one conversational turn.
     mockChat.mockResolvedValueOnce("direct answer");
 
-    await runAgentLoop(initialMessages, noTools);
+    await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     // Only the one loop-iteration call -- no extra rewrite call was made.
     expect(mockChat).toHaveBeenCalledTimes(1);
@@ -199,7 +200,7 @@ describe("runAgentLoop", () => {
       .mockResolvedValueOnce("who leads the platform team") // the rewrite call
       .mockResolvedValueOnce("direct answer"); // the loop's own call
 
-    const result = await runAgentLoop(messagesWithHistory, noTools);
+    const result = await runAgentLoop(messagesWithHistory, noTools, TEST_USER_ID);
 
     expect(mockChat).toHaveBeenCalledTimes(2);
     // The rewrite call itself gets no `tools` param -- it's a plain rewrite, not a search.
@@ -229,7 +230,7 @@ describe("runAgentLoop", () => {
       .mockResolvedValueOnce("a fully self-contained question already") // rewrite: no-op
       .mockResolvedValueOnce("direct answer");
 
-    await runAgentLoop(messagesWithHistory, noTools);
+    await runAgentLoop(messagesWithHistory, noTools, TEST_USER_ID);
 
     const loopMessages = mockChat.mock.calls[1][0];
     expect(loopMessages.some((m) => m.content?.includes("Context hint"))).toBe(false);
@@ -249,7 +250,7 @@ describe("runAgentLoop", () => {
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = await runAgentLoop(messagesWithHistory, noTools);
+    const result = await runAgentLoop(messagesWithHistory, noTools, TEST_USER_ID);
 
     expect(result.answer).toBe("direct answer");
     const loopMessages = mockChat.mock.calls[1][0];
@@ -274,8 +275,12 @@ describe("runAgentLoop", () => {
       .mockResolvedValueOnce("supported");
     mockExecuteTool.mockResolvedValueOnce([{ documentName: "d.md", chunkText: "c", score: 0.9 }]);
 
-    await runAgentLoop(messagesWithHistory, noTools);
+    await runAgentLoop(messagesWithHistory, noTools, TEST_USER_ID);
 
-    expect(mockExecuteTool).toHaveBeenCalledWith("search_notes", { query: "who leads the platform team" });
+    expect(mockExecuteTool).toHaveBeenCalledWith(
+      "search_notes",
+      { query: "who leads the platform team" },
+      TEST_USER_ID,
+    );
   });
 });

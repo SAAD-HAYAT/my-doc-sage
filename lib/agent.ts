@@ -216,9 +216,12 @@ async function checkGroundedness(
 // Runs the bounded tool-calling loop: call chat() with tools, execute
 // any requested tools and feed results back, repeat until the model
 // returns a final answer (no tool_calls) or MAX_ITERATIONS is hit.
+// Phase 7: `userId` is threaded straight into every executeTool() call so
+// search_notes/list_documents stay scoped to the authenticated caller.
 export async function runAgentLoop(
   initialMessages: ChatMessage[],
   toolDefs: ToolDefinition[],
+  userId: string,
 ): Promise<AgentResult> {
   // Each iteration builds a NEW messages array rather than mutating a
   // shared one in place -- chat() is called with a fresh array every time
@@ -257,7 +260,7 @@ export async function runAgentLoop(
         );
       }
 
-      const result = await executeTool(call.function.name, args);
+      const result = await executeTool(call.function.name, args, userId);
 
       if (call.function.name === "search_notes") {
         sources = result as RetrievedChunk[];

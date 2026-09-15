@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { ChatMessage } from "@/lib/openrouter";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase";
+import { getAuthenticatedUser } from "@/lib/supabase-server";
 import { tools } from "@/lib/tools";
 import { runAgentLoop } from "@/lib/agent";
 
@@ -11,6 +12,10 @@ import { runAgentLoop } from "@/lib/agent";
 //          up-front retrieval.
 // Phase 4: tool calling is now a bounded loop (lib/agent.ts) instead of a
 //          single round, plus a groundedness self-check on the final answer.
+// Phase 7: requires an authenticated session; every query/insert against
+//          `messages` is explicitly scoped to that user's id -- see
+//          lib/supabase.ts's comment on why that's required even with
+//          RLS enabled.
 
 const SYSTEM_PROMPT =
   "You are NotesRAG, an assistant that answers questions strictly from the user's uploaded notes. " +
@@ -19,6 +24,11 @@ const SYSTEM_PROMPT =
   "— if the notes don't contain enough information after searching, say so plainly.";
 
 export async function POST(req: NextRequest) {
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   let body: { message?: unknown; sessionId?: unknown };
   try {
     body = await req.json();
@@ -42,10 +52,11 @@ export async function POST(req: NextRequest) {
     // messages (~5 exchanges) to keep token usage bounded. Fetch
     // newest-first + limit, then flip to chronological order. The current
     // message isn't persisted yet, so it won't appear here.
-    const { data: priorRows, error: historyError } = await supabase
+    const { data: priorRows, error: historyError } = await supabaseAdmin
       .from("messages")
       .select("role, content")
       .eq("session_id", sessionId)
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(10);
 
@@ -70,7 +81,7 @@ export async function POST(req: NextRequest) {
     // tool-result messages) isn't persisted -- the `messages` table /
     // GET /api/chat/:sessionId contract only knows about "user" |
     // "assistant" roles.
-    const { answer, sources, groundednessWarning } = await runAgentLoop(messages, tools);
+    const { answer, sources, groundednessWarning } = await runAgentLoop(messages, tools, user.id);
 
     if (groundednessWarning) {
       // Logged for now, not surfaced in the API response -- the contract
@@ -81,11 +92,12 @@ export async function POST(req: NextRequest) {
 
     // Persist the exchange. User message first, then the assistant reply,
     // so history reads back in order.
-    await supabase
+    await supabaseAdmin
       .from("messages")
-      .insert({ session_id: sessionId, role: "user", content: message });
-    await supabase.from("messages").insert({
+      .insert({ session_id: sessionId, user_id: user.id, role: "user", content: message });
+    await supabaseAdmin.from("messages").insert({
       session_id: sessionId,
+      user_id: user.id,
       role: "assistant",
       content: answer,
       sources,

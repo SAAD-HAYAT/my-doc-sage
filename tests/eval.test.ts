@@ -11,16 +11,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/retrieval", () => ({ retrieve: vi.fn() }));
 vi.mock("@/lib/agent", () => ({ runAgentLoop: vi.fn() }));
 vi.mock("@/lib/tools", () => ({ tools: [{ type: "function", function: { name: "search_notes" } }] }));
-vi.mock("@/lib/supabase", () => ({ supabase: { from: vi.fn() } }));
+vi.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: vi.fn() } }));
 
 import { runAgentLoop } from "@/lib/agent";
 import { retrieve } from "@/lib/retrieval";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase";
 import { evaluateCase, loadEvalSet, runEval, summarize, type EvalCase } from "@/scripts/eval";
 
 const mockRetrieve = vi.mocked(retrieve);
 const mockRunAgentLoop = vi.mocked(runAgentLoop);
-const mockFrom = vi.mocked(supabase.from);
+const mockFrom = vi.mocked(supabaseAdmin.from);
+const TEST_USER_ID = "test-user-id";
 
 function mockChunkLookup(byId: Record<string, string | null>) {
   mockFrom.mockImplementation((_table: string) => {
@@ -55,7 +56,7 @@ describe("evaluateCase", () => {
       sources: [],
     });
 
-    const result = await evaluateCase(CASE);
+    const result = await evaluateCase(CASE, TEST_USER_ID);
 
     expect(result.retrievalHit).toBe(true);
     expect(result.faithful).toBe(true);
@@ -67,7 +68,7 @@ describe("evaluateCase", () => {
     mockRetrieve.mockResolvedValue([{ documentName: "d.pdf", chunkText: "an unrelated chunk", score: 0.4 }]);
     mockRunAgentLoop.mockResolvedValue({ answer: "AWS Cloud Foundations, apparently.", sources: [] });
 
-    const result = await evaluateCase(CASE);
+    const result = await evaluateCase(CASE, TEST_USER_ID);
 
     expect(result.retrievalHit).toBe(false);
   });
@@ -77,7 +78,7 @@ describe("evaluateCase", () => {
     mockRetrieve.mockResolvedValue([]);
     mockRunAgentLoop.mockResolvedValue({ answer: "I couldn't find that in your notes.", sources: [] });
 
-    const result = await evaluateCase(CASE);
+    const result = await evaluateCase(CASE, TEST_USER_ID);
     expect(result.faithful).toBe(false);
   });
 
@@ -86,7 +87,7 @@ describe("evaluateCase", () => {
     mockRetrieve.mockResolvedValue([]);
     mockRunAgentLoop.mockResolvedValue({ answer: "he has aws cloud foundations, from 2024.", sources: [] });
 
-    const result = await evaluateCase(CASE);
+    const result = await evaluateCase(CASE, TEST_USER_ID);
     expect(result.faithful).toBe(true);
   });
 
@@ -95,7 +96,7 @@ describe("evaluateCase", () => {
     mockRetrieve.mockResolvedValue([]);
     mockRunAgentLoop.mockResolvedValue({ answer: "answer", sources: [] });
 
-    await evaluateCase(CASE);
+    await evaluateCase(CASE, TEST_USER_ID);
 
     expect(mockRunAgentLoop).toHaveBeenCalledTimes(1);
     const [messages, toolsArg] = mockRunAgentLoop.mock.calls[0];
@@ -108,7 +109,7 @@ describe("evaluateCase", () => {
   it("a bad expectedChunkId (stale after a re-upload) fails that case gracefully instead of throwing", async () => {
     mockChunkLookup({}); // "chunk-1" not found
 
-    const result = await evaluateCase(CASE);
+    const result = await evaluateCase(CASE, TEST_USER_ID);
 
     expect(result.retrievalHit).toBe(false);
     expect(result.faithful).toBe(false);
@@ -121,7 +122,7 @@ describe("evaluateCase", () => {
     mockChunkLookup({ "chunk-1": "x" });
     mockRetrieve.mockRejectedValue(new Error("embedding service down"));
 
-    const result = await evaluateCase(CASE);
+    const result = await evaluateCase(CASE, TEST_USER_ID);
 
     expect(result.error).toMatch(/embedding service down/);
     expect(result.retrievalHit).toBe(false);
@@ -133,7 +134,7 @@ describe("evaluateCase", () => {
     mockRetrieve.mockResolvedValue([]);
     mockRunAgentLoop.mockRejectedValue(new Error("all chat models exhausted"));
 
-    const result = await evaluateCase(CASE);
+    const result = await evaluateCase(CASE, TEST_USER_ID);
 
     expect(result.error).toMatch(/all chat models exhausted/);
     expect(result.faithful).toBe(false);
@@ -227,7 +228,7 @@ describe("runEval", () => {
       { question: "q2", expectedChunkId: "chunk-2", expectedAnswerContains: "y" },
     ]);
 
-    const results = await runEval(fixturePath);
+    const results = await runEval(fixturePath, TEST_USER_ID);
 
     expect(results).toHaveLength(2);
     expect(mockRunAgentLoop).toHaveBeenCalledTimes(2);
@@ -245,7 +246,7 @@ describe("runEval", () => {
       { question: "q3", expectedChunkId: "chunk-3", expectedAnswerContains: "z" },
     ]);
 
-    const results = await runEval(fixturePath, 1);
+    const results = await runEval(fixturePath, TEST_USER_ID, 1);
 
     expect(results).toHaveLength(1);
     expect(mockRunAgentLoop).toHaveBeenCalledTimes(1);

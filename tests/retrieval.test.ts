@@ -22,14 +22,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // 6's eval harness, not this one.
 
 vi.mock("@/lib/openrouter", () => ({ embed: vi.fn() }));
-vi.mock("@/lib/supabase", () => ({ supabase: { rpc: vi.fn() } }));
+vi.mock("@/lib/supabase", () => ({ supabaseAdmin: { rpc: vi.fn() } }));
 
 import { embed } from "@/lib/openrouter";
 import { retrieve } from "@/lib/retrieval";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase";
 
 const mockEmbed = vi.mocked(embed);
-const mockRpc = vi.mocked(supabase.rpc);
+const mockRpc = vi.mocked(supabaseAdmin.rpc);
+const TEST_USER_ID = "test-user-id";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -56,12 +57,13 @@ function expectedScore(vectorRank: number | null, fulltextRank: number | null): 
 describe("retrieve", () => {
   it("embeds the raw query and calls hybrid_search with query_embedding, query_text, and a fixed candidate pool", async () => {
     rpcResult([]);
-    await retrieve("what is the mascot?", 5);
+    await retrieve("what is the mascot?", TEST_USER_ID, 5);
 
     expect(mockEmbed).toHaveBeenCalledWith("what is the mascot?");
     expect(mockRpc).toHaveBeenCalledWith("hybrid_search", {
       query_embedding: [0.1, 0.2, 0.3],
       query_text: "what is the mascot?",
+      p_user_id: TEST_USER_ID,
       match_count: 20,
     });
   });
@@ -76,7 +78,7 @@ describe("retrieve", () => {
       })),
     );
 
-    const result = await retrieve("q", 3);
+    const result = await retrieve("q", TEST_USER_ID, 3);
 
     // Candidate pool requested from the RPC is independent of k...
     expect(mockRpc).toHaveBeenCalledWith("hybrid_search", expect.objectContaining({ match_count: 20 }));
@@ -94,7 +96,7 @@ describe("retrieve", () => {
       })),
     );
 
-    const result = await retrieve("some question");
+    const result = await retrieve("some question", TEST_USER_ID);
     expect(result).toHaveLength(5);
   });
 
@@ -112,7 +114,7 @@ describe("retrieve", () => {
       { content: "chunk C (2nd vector, no keyword hit)", document_name: "doc.md", vector_rank: 2, fulltext_rank: null },
     ]);
 
-    const result = await retrieve("exact keyword");
+    const result = await retrieve("exact keyword", TEST_USER_ID);
 
     expect(result.map((r) => r.chunkText)).toEqual([
       "chunk B (weak vector, exact keyword hit)",
@@ -129,14 +131,14 @@ describe("retrieve", () => {
   it("a chunk ranked #1 in both vector and full-text gets the maximum normalized score of 1", async () => {
     rpcResult([{ content: "perfect hit", document_name: "doc.md", vector_rank: 1, fulltext_rank: 1 }]);
 
-    const result = await retrieve("q");
+    const result = await retrieve("q", TEST_USER_ID);
     expect(result[0].score).toBe(1);
   });
 
   it("a chunk found by only one method still gets a sane, bounded score", async () => {
     rpcResult([{ content: "vector only, top rank", document_name: "doc.md", vector_rank: 1, fulltext_rank: null }]);
 
-    const result = await retrieve("q");
+    const result = await retrieve("q", TEST_USER_ID);
     expect(result[0].score).toBeCloseTo(0.5);
     expect(result[0].score).toBeGreaterThanOrEqual(0);
     expect(result[0].score).toBeLessThanOrEqual(1);
@@ -144,12 +146,12 @@ describe("retrieve", () => {
 
   it("scenario: empty results — returns an empty array, not an error", async () => {
     rpcResult([]);
-    expect(await retrieve("nothing matches")).toEqual([]);
+    expect(await retrieve("nothing matches", TEST_USER_ID)).toEqual([]);
   });
 
   it("scenario: null data (no rows) — treated the same as an empty array", async () => {
     rpcResult(null);
-    expect(await retrieve("q")).toEqual([]);
+    expect(await retrieve("q", TEST_USER_ID)).toEqual([]);
   });
 
   it("scenario: multiple results all bounded in 0-1 and sorted strictly descending by fused score", async () => {
@@ -159,7 +161,7 @@ describe("retrieve", () => {
       { content: "chunk near-tie 3", document_name: "doc.md", vector_rank: null, fulltext_rank: 4 },
     ]);
 
-    const result = await retrieve("q");
+    const result = await retrieve("q", TEST_USER_ID);
 
     for (const r of result) {
       expect(r.score).toBeGreaterThanOrEqual(0);
@@ -171,12 +173,12 @@ describe("retrieve", () => {
 
   it("scenario: single result — maps fields correctly", async () => {
     rpcResult([{ content: "only one", document_name: "doc.md", vector_rank: 1, fulltext_rank: null }]);
-    const result = await retrieve("q");
+    const result = await retrieve("q", TEST_USER_ID);
     expect(result).toEqual([{ documentName: "doc.md", chunkText: "only one", score: expectedScore(1, null) }]);
   });
 
   it("scenario: RPC error surfaces as a descriptive thrown error, not a silent empty result", async () => {
     rpcResult(null, { message: 'relation "chunks" does not exist' });
-    await expect(retrieve("q")).rejects.toThrow(/relation "chunks" does not exist/);
+    await expect(retrieve("q", TEST_USER_ID)).rejects.toThrow(/relation "chunks" does not exist/);
   });
 });
