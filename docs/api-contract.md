@@ -5,6 +5,24 @@ prompt below. Any backend route added in later phases must keep this
 contract stable — extend it, don't break it, or the frontend will need
 regenerating.
 
+## Phase 7: authentication
+
+The original prompt below says "No auth needed yet" — that was true
+through Phase 6. As of Phase 7, **every endpoint below requires an
+authenticated session** (Supabase Auth, Google-only SSO, cookie-based —
+see `docs/phase-7-auth.md`). This isn't a change to the request/response
+shapes documented below, just an added precondition:
+
+- A request with no session, or an invalid/expired one, gets
+  `401 { error: string }` instead of the shapes below.
+- Data returned (documents, chat history) is always scoped to the
+  requesting user — never another user's, even for the same
+  `sessionId`.
+- The frontend doesn't need to add an `Authorization` header or
+  anything else itself: the session is a cookie set by
+  `/auth/callback` after Google sign-in, and `middleware.ts` +
+  `fetch()`'s default same-origin credential behavior handle the rest.
+
 ## Lovable prompt used
 
 ```
@@ -48,16 +66,23 @@ UI. No auth needed yet.
 ### `POST /api/documents`
 Multipart file upload (PDF or Markdown).
 Response: `{ id: string, name: string, status: "processing" | "ready" | "failed", createdAt: string }`
+Requires auth (see above): `401 { error: string }` with no valid session.
 
 ### `GET /api/documents`
-Response: array of the above.
+Response: array of the above (only the requesting user's documents).
+Requires auth: `401 { error: string }` with no valid session.
 
 ### `DELETE /api/documents/:id`
 Response: `204 No Content`
+Requires auth: `401 { error: string }` with no valid session. Deleting
+another user's document id is a no-op (scoped by user_id), not a 403/404.
 
 ### `POST /api/chat`
 Body: `{ message: string, sessionId: string }`
 Response: `{ answer: string, sources: { documentName: string, chunkText: string, score: number }[] }`
+Requires auth: `401 { error: string }` with no valid session.
 
 ### `GET /api/chat/:sessionId`
 Response: array of `{ role: "user" | "assistant", content: string, sources?: [...], createdAt: string }`
+(only the requesting user's own messages for that session).
+Requires auth: `401 { error: string }` with no valid session.

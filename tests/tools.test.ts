@@ -1,18 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// executeTool()'s two branches call retrieve() and supabase directly (read
-// the real lib/tools.ts before writing this) -- mock both so this file
-// costs zero API/DB calls and never lets lib/supabase.ts's fail-fast env
-// check execute for real.
+// executeTool()'s two branches call retrieve() and supabaseAdmin directly
+// (read the real lib/tools.ts before writing this) -- mock both so this
+// file costs zero API/DB calls and never lets lib/supabase.ts's fail-fast
+// env check execute for real.
 vi.mock("@/lib/retrieval", () => ({ retrieve: vi.fn() }));
-vi.mock("@/lib/supabase", () => ({ supabase: { from: vi.fn() } }));
+vi.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: vi.fn() } }));
 
 import { retrieve } from "@/lib/retrieval";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase";
 import { executeTool, listDocumentsTool, searchNotesTool, tools } from "@/lib/tools";
 
 const mockRetrieve = vi.mocked(retrieve);
-const mockFrom = vi.mocked(supabase.from);
+const mockFrom = vi.mocked(supabaseAdmin.from);
+
+const TEST_USER_ID = "test-user-id";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -44,61 +46,66 @@ describe("tool schemas", () => {
   });
 });
 
+// Phase 7: mocks the .select(...).eq("user_id", ...) chain list_documents
+// now goes through -- a plain .select(...) mock (as before Phase 7) would
+// no longer match the real call shape.
+function mockDocumentsQuery(result: { data: unknown; error: unknown }) {
+  const eq = vi.fn().mockResolvedValue(result);
+  const select = vi.fn().mockReturnValue({ eq });
+  mockFrom.mockReturnValue({ select } as never);
+  return { select, eq };
+}
+
 describe("executeTool", () => {
-  it("search_notes: calls retrieve() with the query and k, returns its result", async () => {
+  it("search_notes: calls retrieve() with the query, userId, and k, returns its result", async () => {
     mockRetrieve.mockResolvedValue([{ documentName: "x.md", chunkText: "y", score: 0.8 }]);
 
-    const result = await executeTool("search_notes", { query: "what is X", k: 3 });
+    const result = await executeTool("search_notes", { query: "what is X", k: 3 }, TEST_USER_ID);
 
-    expect(mockRetrieve).toHaveBeenCalledWith("what is X", 3);
+    expect(mockRetrieve).toHaveBeenCalledWith("what is X", TEST_USER_ID, 3);
     expect(result).toEqual([{ documentName: "x.md", chunkText: "y", score: 0.8 }]);
   });
 
   it("search_notes: omitting k lets retrieve() apply its own default", async () => {
     mockRetrieve.mockResolvedValue([]);
 
-    await executeTool("search_notes", { query: "q" });
+    await executeTool("search_notes", { query: "q" }, TEST_USER_ID);
 
-    expect(mockRetrieve).toHaveBeenCalledWith("q", undefined);
+    expect(mockRetrieve).toHaveBeenCalledWith("q", TEST_USER_ID, undefined);
   });
 
   it("search_notes: rejects a missing/empty query without calling retrieve()", async () => {
-    await expect(executeTool("search_notes", {})).rejects.toThrow(/query/i);
-    await expect(executeTool("search_notes", { query: "   " })).rejects.toThrow(/query/i);
+    await expect(executeTool("search_notes", {}, TEST_USER_ID)).rejects.toThrow(/query/i);
+    await expect(executeTool("search_notes", { query: "   " }, TEST_USER_ID)).rejects.toThrow(/query/i);
     expect(mockRetrieve).not.toHaveBeenCalled();
   });
 
-  it("list_documents: queries the documents table directly -- no embedding/chat cost", async () => {
-    const select = vi.fn().mockResolvedValue({
-      data: [{ name: "a.pdf", status: "ready" }],
-      error: null,
-    });
-    mockFrom.mockReturnValue({ select } as never);
+  it("list_documents: queries the documents table scoped to the caller's user_id -- no embedding/chat cost", async () => {
+    const { select, eq } = mockDocumentsQuery({ data: [{ name: "a.pdf", status: "ready" }], error: null });
 
-    const result = await executeTool("list_documents", {});
+    const result = await executeTool("list_documents", {}, TEST_USER_ID);
 
     expect(mockFrom).toHaveBeenCalledWith("documents");
     expect(select).toHaveBeenCalledWith("name, status");
+    expect(eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
     expect(result).toEqual([{ name: "a.pdf", status: "ready" }]);
     expect(mockRetrieve).not.toHaveBeenCalled();
   });
 
   it("list_documents: surfaces a DB error with a descriptive message", async () => {
-    const select = vi.fn().mockResolvedValue({ data: null, error: { message: "relation missing" } });
-    mockFrom.mockReturnValue({ select } as never);
+    mockDocumentsQuery({ data: null, error: { message: "relation missing" } });
 
-    await expect(executeTool("list_documents", {})).rejects.toThrow(/relation missing/);
+    await expect(executeTool("list_documents", {}, TEST_USER_ID)).rejects.toThrow(/relation missing/);
   });
 
   it("list_documents: an empty table returns an empty array, not null/undefined", async () => {
-    const select = vi.fn().mockResolvedValue({ data: null, error: null });
-    mockFrom.mockReturnValue({ select } as never);
+    mockDocumentsQuery({ data: null, error: null });
 
-    expect(await executeTool("list_documents", {})).toEqual([]);
+    expect(await executeTool("list_documents", {}, TEST_USER_ID)).toEqual([]);
   });
 
   it("throws a clear, specific error for an unknown tool name -- doesn't crash", async () => {
-    await expect(executeTool("delete_everything", {})).rejects.toThrow(
+    await expect(executeTool("delete_everything", {}, TEST_USER_ID)).rejects.toThrow(
       /Unknown tool: delete_everything/,
     );
   });

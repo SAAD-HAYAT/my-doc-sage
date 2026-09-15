@@ -23,6 +23,120 @@ export type AgentResult = {
   groundednessWarning?: boolean;
 };
 
+// Phase 5, citations: the model needs to know it should cite [1], [2], etc.
+// This lives here rather than in app/api/chat/route.ts's SYSTEM_PROMPT
+// (Phase 5's file scope is retrieval/agent/db/tests, not the route) --
+// injected as an extra system message rather than editing the caller's
+// prompt in place, so route.ts's own prompt is untouched either way.
+//
+// Why this numbering is trustworthy: search_notes' result array becomes
+// BOTH the tool-result message the model reads (JSON.stringify(result),
+// below) AND -- unmodified, same array, same order -- the `sources` this
+// function returns. So "the model's [1] is whatever it reads first in
+// that JSON array" and "sources[0]" are structurally the same element,
+// not just conventionally expected to line up.
+const CITATION_INSTRUCTION: ChatMessage = {
+  role: "system",
+  content:
+    "When search_notes returns passages, they arrive as a JSON array -- cite them inline in your " +
+    "answer as [1], [2], etc., using that array's order (its first element is [1], second is [2], " +
+    "and so on; this is the same order the passages are shown to the user as sources). Cite every " +
+    "passage your answer actually relies on, and don't cite ones you didn't use.",
+};
+
+// Inserted after any leading system message(s) (route.ts's own prompt),
+// before the first user/assistant turn -- so it augments the existing
+// system prompt instead of replacing or reordering it.
+function withCitationInstruction(messages: ChatMessage[]): ChatMessage[] {
+  const firstNonSystemIndex = messages.findIndex((m) => m.role !== "system");
+  const insertAt = firstNonSystemIndex === -1 ? messages.length : firstNonSystemIndex;
+  return [...messages.slice(0, insertAt), CITATION_INSTRUCTION, ...messages.slice(insertAt)];
+}
+
+// Phase 5, query rewriting: retrieval only ever sees whatever string the
+// model puts in search_notes' `query` argument, and by default that's
+// often just the user's raw message -- a pronoun-heavy follow-up like
+// "who leads that?" embeds and retrieves poorly even though the MODEL
+// itself has the full conversation history to resolve "that" from. This
+// makes that resolution explicit: one extra chat() call (no tools),
+// skipped entirely when there's no prior history to rewrite against (the
+// first message of a session), asking the model to restate the latest
+// message as a self-contained query using the history.
+//
+// The rewritten text is injected as a system-role HINT for the
+// tool-calling model to use (or not) when composing search_notes' query
+// -- not a forced override of whatever the model decides to search for.
+// That keeps the model in control of query composition (it may reasonably
+// combine several aspects of a question into one search, as seen live in
+// earlier phases) while removing the "did it even resolve the pronoun"
+// guesswork. Crucially, the rewrite is NEVER persisted or shown to the
+// user -- route.ts's `messages` table insert and the frontend only ever
+// see the ORIGINAL message; this hint lives only in the ephemeral
+// `messages` array chat() sees inside this function.
+const REWRITE_SYSTEM_PROMPT =
+  "Rewrite the user's latest message into a single self-contained search query, resolving any " +
+  'pronouns or vague references ("that", "the second one", "who leads it") using the conversation ' +
+  "history. Reply with ONLY the rewritten query text -- no quotes, no explanation, no preamble.";
+
+function conversationTurns(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter((m) => m.role === "user" || m.role === "assistant");
+}
+
+async function rewriteQuery(history: ChatMessage[], currentMessage: string): Promise<string | null> {
+  const rewriteMessages: ChatMessage[] = [
+    { role: "system", content: REWRITE_SYSTEM_PROMPT },
+    ...history,
+    { role: "user", content: currentMessage },
+  ];
+
+  let rewritten: string;
+  try {
+    rewritten = await chat(rewriteMessages);
+  } catch (err) {
+    console.warn(
+      `[agent] query-rewrite call failed, proceeding without a rewrite hint: ${err instanceof Error ? err.message : err}`,
+    );
+    return null;
+  }
+
+  const trimmed = rewritten.trim();
+  return trimmed || null;
+}
+
+// Skips (no extra call) when `messages` holds only the current turn --
+// i.e. the first message of a session, matching the phase's "skip
+// entirely on turn 1" requirement. Otherwise rewrites and inserts the
+// hint immediately before the current user message (the last element),
+// regardless of what other system messages (route's prompt, the citation
+// instruction) already precede it.
+async function withRewrittenQueryHint(messages: ChatMessage[]): Promise<ChatMessage[]> {
+  const turns = conversationTurns(messages);
+  if (turns.length <= 1) return messages;
+
+  const currentMessage = turns[turns.length - 1];
+  const history = turns.slice(0, -1);
+
+  if (typeof currentMessage.content !== "string" || !currentMessage.content.trim()) {
+    return messages;
+  }
+
+  const rewritten = await rewriteQuery(history, currentMessage.content);
+  if (!rewritten || rewritten === currentMessage.content.trim()) return messages;
+
+  console.log(`[agent] query rewrite: "${currentMessage.content}" -> "${rewritten}"`);
+
+  const hint: ChatMessage = {
+    role: "system",
+    content:
+      `Context hint: resolved against the conversation so far, the user's latest message can be ` +
+      `restated as this self-contained query: "${rewritten}". If you call search_notes, prefer using ` +
+      "this (or an equally self-contained rephrasing) as your query -- it resolves references from " +
+      "earlier turns that the raw message alone would not.",
+  };
+
+  return [...messages.slice(0, -1), hint, messages[messages.length - 1]];
+}
+
 function summarizeToolResult(
   name: string,
   result: RetrievedChunk[] | DocumentSummary[],
@@ -102,15 +216,19 @@ async function checkGroundedness(
 // Runs the bounded tool-calling loop: call chat() with tools, execute
 // any requested tools and feed results back, repeat until the model
 // returns a final answer (no tool_calls) or MAX_ITERATIONS is hit.
+// Phase 7: `userId` is threaded straight into every executeTool() call so
+// search_notes/list_documents stay scoped to the authenticated caller.
 export async function runAgentLoop(
   initialMessages: ChatMessage[],
   toolDefs: ToolDefinition[],
+  userId: string,
 ): Promise<AgentResult> {
   // Each iteration builds a NEW messages array rather than mutating a
   // shared one in place -- chat() is called with a fresh array every time
   // so nothing (a caller, a test spy, a log) that captured an earlier
   // reference ever sees it change out from under it later.
-  let messages: ChatMessage[] = [...initialMessages];
+  let messages: ChatMessage[] = withCitationInstruction(initialMessages);
+  messages = await withRewrittenQueryHint(messages);
   let sources: RetrievedChunk[] = [];
 
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
@@ -142,7 +260,7 @@ export async function runAgentLoop(
         );
       }
 
-      const result = await executeTool(call.function.name, args);
+      const result = await executeTool(call.function.name, args, userId);
 
       if (call.function.name === "search_notes") {
         sources = result as RetrievedChunk[];

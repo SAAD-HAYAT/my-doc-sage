@@ -45,6 +45,7 @@
     "@streamdown/code": "^1.1.1",
     "@streamdown/math": "^1.0.2",
     "@streamdown/mermaid": "^1.0.2",
+    "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.45.0",
     "ai": "^7.0.93",
     "class-variance-authority": "^0.7.1",
@@ -91,5 +92,11 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
     "vitest": "^2.0.0"
+  },
+  "allowScripts": {
+    "sharp@0.34.5": true,
+    "sharp@0.35.4": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.21.5": true
   }
 }

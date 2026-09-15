@@ -6,11 +6,13 @@ Read this file fully before writing any code.
 ## Ground rules
 
 1. **Work one phase at a time.** Phase docs live in
-   `docs/phase-1-basic-rag.md` through `docs/phase-6-eval-harness.md`. Do
-   not implement logic from a later phase while working on an earlier
-   one, even if it seems convenient — the point of this project is to
-   build up complexity incrementally as a learning exercise, not to ship
-   the most complete system in one pass.
+   `docs/phase-1-basic-rag.md` through `docs/phase-6-eval-harness.md`,
+   plus `docs/phase-7-auth.md` (added afterward, as new scope beyond the
+   original 6-phase roadmap — Google-only SSO and per-user data
+   isolation). Do not implement logic from a later phase while working
+   on an earlier one, even if it seems convenient — the point of this
+   project is to build up complexity incrementally as a learning
+   exercise, not to ship the most complete system in one pass.
 2. **Do not move to the next phase until the current phase's acceptance
    criteria are met and its tests pass.** Phase 1 has no tests yet
    (that's Phase 2's job) — build the feature, then Phase 2 covers it
@@ -23,11 +25,17 @@ Read this file fully before writing any code.
    was migrated in from Lovable and is **behaviorally frozen** — don't
    restyle, rename, or restructure it. Backend phase work touches only
    `app/api/`, the backend modules in `lib/` (`supabase.ts`,
-   `openrouter.ts`, `chunking.ts`, `retrieval.ts`, `tools.ts`), `db/`,
-   `tests/`, and `scripts/`. The API contract in `docs/api-contract.md`
-   is fixed — don't change route shapes or response fields without
-   flagging it to the user first, since the frontend was built against
-   that exact contract.
+   `supabase-server.ts`, `supabase-browser.ts`, `openrouter.ts`,
+   `chunking.ts`, `retrieval.ts`, `tools.ts`, `agent.ts`), `middleware.ts`,
+   `db/`, `tests/`, and `scripts/`. The API contract in
+   `docs/api-contract.md` is fixed — don't change route shapes or
+   response fields without flagging it to the user first, since the
+   frontend was built against that exact contract (Phase 7 is the one
+   documented exception: it added `app/login/` and `app/auth/callback/`,
+   since no login page existed at all, plus a small logout control in
+   `app/page.tsx`'s existing top bar — a deliberate, narrowly scoped
+   exception granted for that phase, not a standing license to touch the
+   rest of the frontend).
 4. **Keep Phase 1 simple.** No agent loops, no tool calling, no
    reranking — just a straight retrieve-then-generate pipeline. Resist
    adding robustness or abstractions that belong to a later phase.
@@ -47,7 +55,17 @@ Read this file fully before writing any code.
 ## Environment variables
 
 See `.env.example`. You'll need `OPENROUTER_API_KEY`, `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`.
+`SUPABASE_SERVICE_ROLE_KEY`. `OPENROUTER_API_KEY_2` is optional — a
+second account's key that `lib/openrouter.ts` automatically switches to
+once the primary key's free-tier daily quota is exhausted (a 429).
+
+Phase 7 (auth) added `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (the browser-safe key — check
+Supabase's dashboard under Project Settings > API; newer projects call
+it "publishable," older ones "anon," either works with `@supabase/ssr`).
+`EVAL_USER_ID` is optional, only needed to run `npm run eval` — the
+`auth.users` UUID that owns the documents `tests/fixtures/eval-set.json`
+is grounded in.
 
 ## Where to start
 

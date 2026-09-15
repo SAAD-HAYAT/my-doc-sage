@@ -103,13 +103,49 @@ export type AssistantToolCallMessage = {
   tool_calls: ToolCall[];
 };
 
-function headers(): HeadersInit {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) {
+// Optional second key (OPENROUTER_API_KEY_2): OpenRouter's free-tier daily
+// request quota is per-key, so a second key from a different account
+// effectively doubles daily capacity. Read lazily (not at module load) so
+// tests can set/unset process.env before calling in, and re-filtered on
+// every read so a key added after the process started (unlikely, but
+// cheap to support) is picked up too.
+function configuredKeys(): string[] {
+  return [process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_API_KEY_2].filter(
+    (k): k is string => typeof k === "string" && k.length > 0,
+  );
+}
+
+// Sticky across calls for the lifetime of the process: once the primary
+// key is seen to be exhausted (a 429), stop trying it first on every
+// subsequent request -- go straight to the next key instead of wasting a
+// request re-discovering the same 429.
+let activeKeyIndex = 0;
+
+function currentKey(): string {
+  const keys = configuredKeys();
+  if (keys.length === 0) {
     throw new Error(
       "Missing OPENROUTER_API_KEY — copy .env.example to .env and fill it in.",
     );
   }
+  // Clamp in case OPENROUTER_API_KEY_2 was removed after we'd switched to it.
+  if (activeKeyIndex >= keys.length) activeKeyIndex = keys.length - 1;
+  return keys[activeKeyIndex];
+}
+
+// Switches to the next configured key, if any. Returns false (and leaves
+// activeKeyIndex unchanged) once there's no further key to fall back to.
+function switchToNextKey(): boolean {
+  const keys = configuredKeys();
+  if (activeKeyIndex + 1 >= keys.length) return false;
+  activeKeyIndex += 1;
+  console.warn(
+    `[openrouter] key #${activeKeyIndex} returned 429; switching to fallback key #${activeKeyIndex + 1}.`,
+  );
+  return true;
+}
+
+function headers(key: string): HeadersInit {
   return {
     Authorization: `Bearer ${key}`,
     "Content-Type": "application/json",
@@ -121,12 +157,28 @@ async function errorFrom(res: Response, label: string): Promise<Error> {
   return new Error(`OpenRouter ${label} failed (${res.status} ${res.statusText}): ${body}`);
 }
 
+// Runs `doFetch` with the current key; on a 429 (rate limit / daily quota
+// exhausted), switches to the next configured key and retries the exact
+// same request, repeating until either a non-429 response comes back or
+// there are no more keys to try.
+async function fetchWithKeyFallback(
+  doFetch: (key: string) => Promise<Response>,
+): Promise<Response> {
+  let res = await doFetch(currentKey());
+  while (res.status === 429 && switchToNextKey()) {
+    res = await doFetch(currentKey());
+  }
+  return res;
+}
+
 export async function embed(text: string): Promise<number[]> {
-  const res = await fetch(`${OPENROUTER_URL}/embeddings`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({ model: EMBEDDING_MODEL, input: text }),
-  });
+  const res = await fetchWithKeyFallback((key) =>
+    fetch(`${OPENROUTER_URL}/embeddings`, {
+      method: "POST",
+      headers: headers(key),
+      body: JSON.stringify({ model: EMBEDDING_MODEL, input: text }),
+    }),
+  );
 
   if (!res.ok) throw await errorFrom(res, "embeddings");
 
@@ -154,11 +206,13 @@ export async function chat(
   tools?: ToolDefinition[],
 ): Promise<string | AssistantToolCallMessage> {
   const call = (model: string) =>
-    fetch(`${OPENROUTER_URL}/chat/completions`, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify(tools ? { model, messages, tools } : { model, messages }),
-    });
+    fetchWithKeyFallback((key) =>
+      fetch(`${OPENROUTER_URL}/chat/completions`, {
+        method: "POST",
+        headers: headers(key),
+        body: JSON.stringify(tools ? { model, messages, tools } : { model, messages }),
+      }),
+    );
 
   let lastError: Error = new Error("No chat models were tried");
 

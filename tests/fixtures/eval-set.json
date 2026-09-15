@@ -1,7 +1,92 @@
 [
   {
-    "question": "Replace me with a real question about your own notes",
-    "expectedChunkId": "fill-in-once-you-have-real-chunk-ids",
-    "expectedAnswerContains": "a phrase you expect in a correct answer"
+    "question": "What is Saad's phone number?",
+    "expectedChunkId": "519bcee4-3136-4051-b495-fbe2a667c9e8",
+    "expectedAnswerContains": "+92-332-2390876"
+  },
+  {
+    "question": "What is Saad's email address?",
+    "expectedChunkId": "519bcee4-3136-4051-b495-fbe2a667c9e8",
+    "expectedAnswerContains": "saadyaya5@gmail.com"
+  },
+  {
+    "question": "What is Saad's GitHub username?",
+    "expectedChunkId": "519bcee4-3136-4051-b495-fbe2a667c9e8",
+    "expectedAnswerContains": "SAAD-HAYAT"
+  },
+  {
+    "question": "What is Saad's LinkedIn profile URL?",
+    "expectedChunkId": "519bcee4-3136-4051-b495-fbe2a667c9e8",
+    "expectedAnswerContains": "saad-hayat-mubarik"
+  },
+  {
+    "question": "Which company does Saad currently work at?",
+    "expectedChunkId": "519bcee4-3136-4051-b495-fbe2a667c9e8",
+    "expectedAnswerContains": "Gengini"
+  },
+  {
+    "question": "When did Saad start his current role at Gengini?",
+    "expectedChunkId": "519bcee4-3136-4051-b495-fbe2a667c9e8",
+    "expectedAnswerContains": "Mar 2025"
+  },
+  {
+    "question": "How many product verticals has Saad owned end-to-end according to his professional summary?",
+    "expectedChunkId": "519bcee4-3136-4051-b495-fbe2a667c9e8",
+    "expectedAnswerContains": "five"
+  },
+  {
+    "question": "How far ahead of schedule did Saad deliver the cybersecurity GRC platform?",
+    "expectedChunkId": "519bcee4-3136-4051-b495-fbe2a667c9e8",
+    "expectedAnswerContains": "15 days"
+  },
+  {
+    "question": "What is Codepilot?",
+    "expectedChunkId": "2a3e6a30-aedd-4e43-9c7e-14ee4177e0af",
+    "expectedAnswerContains": "coding-agent"
+  },
+  {
+    "question": "What response latency did Saad's voice-AI telephony bridge achieve?",
+    "expectedChunkId": "2a3e6a30-aedd-4e43-9c7e-14ee4177e0af",
+    "expectedAnswerContains": "Sub-1-second"
+  },
+  {
+    "question": "What document-pipeline accuracy did Saad's HIPAA-aligned NLP/CV pipeline achieve?",
+    "expectedChunkId": "2a3e6a30-aedd-4e43-9c7e-14ee4177e0af",
+    "expectedAnswerContains": "96%"
+  },
+  {
+    "question": "What improvement in HR process efficiency did Saad's HRMS project achieve?",
+    "expectedChunkId": "2a3e6a30-aedd-4e43-9c7e-14ee4177e0af",
+    "expectedAnswerContains": "25%"
+  },
+  {
+    "question": "What company did Saad work at before Gengini?",
+    "expectedChunkId": "2a3e6a30-aedd-4e43-9c7e-14ee4177e0af",
+    "expectedAnswerContains": "Hail Technologies"
+  },
+  {
+    "question": "What was Saad's job title at Hail Technologies?",
+    "expectedChunkId": "2a3e6a30-aedd-4e43-9c7e-14ee4177e0af",
+    "expectedAnswerContains": "Software Engineer"
+  },
+  {
+    "question": "How many ERP automations did Saad integrate at Hail Technologies?",
+    "expectedChunkId": "e1815d00-3280-47db-9a02-2d97d148a69d",
+    "expectedAnswerContains": "3"
+  },
+  {
+    "question": "What certification does Saad have?",
+    "expectedChunkId": "e1815d00-3280-47db-9a02-2d97d148a69d",
+    "expectedAnswerContains": "AWS Cloud Foundations"
+  },
+  {
+    "question": "What university did Saad attend for his Bachelor's degree?",
+    "expectedChunkId": "e1815d00-3280-47db-9a02-2d97d148a69d",
+    "expectedAnswerContains": "SZABIST"
+  },
+  {
+    "question": "What was the name of Saad's capstone project?",
+    "expectedChunkId": "e1815d00-3280-47db-9a02-2d97d148a69d",
+    "expectedAnswerContains": "Dealership Management System"
   }
 ]
