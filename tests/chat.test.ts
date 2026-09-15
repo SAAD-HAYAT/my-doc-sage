@@ -97,17 +97,26 @@ describe("POST /api/chat — conversation memory", () => {
       ],
     });
 
+    // Phase 5 query rewriting fires whenever prior history exists (it does
+    // here: Q1/A1) -- make it a no-op rewrite (returns the message
+    // unchanged) so the loop's own message shape below is unaffected by it.
+    mockChat.mockResolvedValueOnce("Q2");
+
     const res = await post({ message: "Q2", sessionId: "s1" });
     expect(res.status).toBe(200);
 
-    expect(mockChat).toHaveBeenCalledTimes(1);
-    const messages = mockChat.mock.calls[0][0];
+    // [0] = the query-rewrite call, [1] = the actual loop call.
+    expect(mockChat).toHaveBeenCalledTimes(2);
+    const messages = mockChat.mock.calls[1][0];
 
-    expect(messages).toHaveLength(4);
+    // Phase 5: runAgentLoop injects its own citation-instruction system
+    // message right after route.ts's system prompt, before the rest.
+    expect(messages).toHaveLength(5);
     expect(messages[0].role).toBe("system");
-    expect(messages[1]).toEqual({ role: "user", content: "Q1" });
-    expect(messages[2]).toEqual({ role: "assistant", content: "A1" });
-    expect(messages[3]).toEqual({ role: "user", content: "Q2" });
+    expect(messages[1].role).toBe("system"); // citation instruction (lib/agent.ts)
+    expect(messages[2]).toEqual({ role: "user", content: "Q1" });
+    expect(messages[3]).toEqual({ role: "assistant", content: "A1" });
+    expect(messages[4]).toEqual({ role: "user", content: "Q2" });
   });
 
   it("sends just [system, current user message] on a brand new session", async () => {
@@ -116,9 +125,10 @@ describe("POST /api/chat — conversation memory", () => {
     await post({ message: "first question", sessionId: "new-session" });
 
     const messages = mockChat.mock.calls[0][0];
-    expect(messages).toHaveLength(2);
+    expect(messages).toHaveLength(3);
     expect(messages[0].role).toBe("system");
-    expect(messages[1]).toEqual({ role: "user", content: "first question" });
+    expect(messages[1].role).toBe("system"); // citation instruction (lib/agent.ts)
+    expect(messages[2]).toEqual({ role: "user", content: "first question" });
   });
 
   it("requests at most the last 10 messages, oldest-to-newest, from newest-first DB rows", async () => {
@@ -135,14 +145,18 @@ describe("POST /api/chat — conversation memory", () => {
       ],
     });
 
+    // No-op rewrite (see the history-exists test above for why).
+    mockChat.mockResolvedValueOnce("current turn");
+
     await post({ message: "current turn", sessionId: "s1" });
 
     expect(historyLimit).toHaveBeenCalledWith(10);
 
-    const messages = mockChat.mock.calls[0][0];
-    // system, 4 prior (now chronological), current = 6
-    expect(messages).toHaveLength(6);
-    expect(messages.slice(1, -1)).toEqual([
+    const messages = mockChat.mock.calls[1][0];
+    // system, citation instruction (Phase 5), 4 prior (now chronological), current = 7
+    expect(messages).toHaveLength(7);
+    expect(messages[1].role).toBe("system"); // citation instruction (lib/agent.ts)
+    expect(messages.slice(2, -1)).toEqual([
       { role: "user", content: "turn3-user" },
       { role: "assistant", content: "turn3-assistant" },
       { role: "user", content: "turn4-user" },
@@ -167,10 +181,13 @@ describe("POST /api/chat — conversation memory", () => {
       ],
     });
 
+    // No-op rewrite (see the history-exists test above for why).
+    mockChat.mockResolvedValueOnce("follow-up");
+
     await post({ message: "follow-up", sessionId: "s1" });
 
-    const messages = mockChat.mock.calls[0][0];
-    const priorEntry = messages[1];
+    const messages = mockChat.mock.calls[1][0];
+    const priorEntry = messages[2]; // index 1 is the Phase 5 citation instruction
     expect(Object.keys(priorEntry).sort()).toEqual(["content", "role"]);
     expect(priorEntry).toEqual({
       role: "assistant",
@@ -218,6 +235,10 @@ describe("POST /api/chat — tool calling", () => {
       { documentName: "notes.md", chunkText: "the answer lives here", score: 0.77 },
     ]);
     mockChat
+      // Phase 5: prior history exists ("earlier turn"), so the query-rewrite
+      // call fires first -- a no-op rewrite here keeps the rest of this
+      // test's message-shape assertions unaffected by it.
+      .mockResolvedValueOnce("what is X?")
       .mockResolvedValueOnce(toolCallResponse("search_notes", { query: "what is X?", k: 3 }))
       .mockResolvedValueOnce("X is explained in your notes.")
       .mockResolvedValueOnce("supported"); // Phase 4 groundedness self-check
@@ -232,13 +253,13 @@ describe("POST /api/chat — tool calling", () => {
       sources: [{ documentName: "notes.md", chunkText: "the answer lives here", score: 0.77 }],
     });
 
-    // Phase 4: loop call 1 (search_notes) + loop call 2 (final answer) +
-    // 1 groundedness self-check call now that search_notes populated sources.
-    expect(mockChat).toHaveBeenCalledTimes(3);
-    const [initialMessages, toolsArg] = mockChat.mock.calls[0];
+    // [0] rewrite + loop call 1 (search_notes) + loop call 2 (final answer)
+    // + 1 groundedness self-check call now that search_notes populated sources.
+    expect(mockChat).toHaveBeenCalledTimes(4);
+    const [initialMessages, toolsArg] = mockChat.mock.calls[1];
     expect(toolsArg).toBeDefined();
 
-    const followUpMessages = mockChat.mock.calls[1][0];
+    const followUpMessages = mockChat.mock.calls[2][0];
     // Follow-up = everything sent the first time, plus the assistant's
     // tool_calls message, plus one tool-result message per call.
     expect(followUpMessages).toHaveLength(initialMessages.length + 2);
@@ -264,9 +285,10 @@ describe("POST /api/chat — tool calling", () => {
 
     // Phase 4: every loop iteration still offers tools (that's what lets a
     // model request a second search instead of hallucinating one as text) —
-    // only the separate groundedness self-check call (3rd) omits it.
-    expect(mockChat.mock.calls[1][1]).toBeDefined();
-    expect(mockChat.mock.calls[2][1]).toBeUndefined();
+    // only the rewrite call (0) and the groundedness self-check call (3) omit it.
+    expect(mockChat.mock.calls[0][1]).toBeUndefined();
+    expect(mockChat.mock.calls[2][1]).toBeDefined();
+    expect(mockChat.mock.calls[3][1]).toBeUndefined();
   });
 
   it("search_notes: called with only a query defaults k inside the executor", async () => {
