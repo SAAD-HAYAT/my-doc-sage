@@ -15,6 +15,7 @@ import {
   type RagDocument,
 } from "@/lib/notes-rag-api";
 import { FILE_SIZE_TOO_LARGE_MESSAGE, isUploadTooLarge } from "@/lib/document-upload";
+import { prepareDocumentUpload } from "@/lib/document-trimming";
 
 function newSessionId() {
   return crypto.randomUUID();
@@ -41,7 +42,10 @@ export default function Index() {
   useEffect(() => {
     if (!documents.some((d) => d.status === "processing")) return;
     const t = setInterval(() => {
-      documentsApi.list().then(setDocuments).catch(() => {});
+      documentsApi
+        .list()
+        .then(setDocuments)
+        .catch(() => {});
     }, 3000);
     return () => clearInterval(t);
   }, [documents]);
@@ -55,24 +59,38 @@ export default function Index() {
   }, [sessionId]);
 
   const handleUpload = useCallback(async (files: File[]) => {
-    const acceptedFiles = files.filter((file) => !isUploadTooLarge(file.size));
-    if (acceptedFiles.length !== files.length) {
-      toast.error(FILE_SIZE_TOO_LARGE_MESSAGE);
-    }
-    if (acceptedFiles.length === 0) return;
-
     setUploading(true);
     try {
-      for (const file of acceptedFiles) {
-        const doc = await documentsApi.upload(file);
-        setDocuments((prev) => [doc, ...prev]);
+      for (const file of files) {
+        const wasOversized = isUploadTooLarge(file.size);
+        try {
+          const prepared = await prepareDocumentUpload(file);
+          if (prepared.trimmed) {
+            const { unit, included, total } = prepared.trimmed;
+            toast.warning(FILE_SIZE_TOO_LARGE_MESSAGE, {
+              description: `Trimmed to ${unit} 1–${included} of ${total}. The chatbot has context through ${unit === "pages" ? "page" : "line"} ${included}.`,
+            });
+          } else if (prepared.wasOptimized) {
+            toast.warning(FILE_SIZE_TOO_LARGE_MESSAGE, {
+              description: "The PDF was optimized to fit; all pages are available to the chatbot.",
+            });
+          }
+
+          const doc = await documentsApi.upload(prepared.file, prepared.trimmed);
+          setDocuments((prev) => [doc, ...prev]);
+        } catch (error) {
+          if (wasOversized || (error instanceof ApiError && error.status === 413)) {
+            toast.error(FILE_SIZE_TOO_LARGE_MESSAGE, {
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "The document could not be trimmed below 4 MB.",
+            });
+          } else {
+            toast.error("Upload failed. Please try again.");
+          }
+        }
       }
-    } catch (error) {
-      toast.error(
-        error instanceof ApiError && error.status === 413
-          ? FILE_SIZE_TOO_LARGE_MESSAGE
-          : "Upload failed. Please try again.",
-      );
     } finally {
       setUploading(false);
     }
@@ -114,8 +132,7 @@ export default function Index() {
           ...prev,
           {
             role: "assistant",
-            content:
-              "Sorry, I couldn't get an answer just now. Please try again.",
+            content: "Sorry, I couldn't get an answer just now. Please try again.",
             createdAt: new Date().toISOString(),
           },
         ]);

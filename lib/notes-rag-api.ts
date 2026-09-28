@@ -3,6 +3,8 @@
  * Frontend-only: all calls go to the endpoints the backend will implement.
  */
 
+import type { TrimmedRange } from "@/lib/document-upload";
+
 export type DocumentStatus = "processing" | "ready" | "failed";
 
 export interface RagDocument {
@@ -10,6 +12,7 @@ export interface RagDocument {
   name: string;
   status: DocumentStatus;
   createdAt: string;
+  trimmed: TrimmedRange | null;
 }
 
 export interface ChatSource {
@@ -52,9 +55,14 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 export const documentsApi = {
   list: () => apiFetch<RagDocument[]>("/api/documents"),
 
-  upload: (file: File) => {
+  upload: (file: File, trimmed: TrimmedRange | null = null) => {
     const form = new FormData();
     form.append("file", file);
+    if (trimmed) {
+      form.append("trimmedUnit", trimmed.unit);
+      form.append("includedCount", String(trimmed.included));
+      form.append("sourceCount", String(trimmed.total));
+    }
     return apiFetch<RagDocument>("/api/documents", {
       method: "POST",
       body: form,

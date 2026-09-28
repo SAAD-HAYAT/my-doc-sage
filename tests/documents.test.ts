@@ -39,9 +39,18 @@ function chainable(result: { data: unknown; error: unknown }) {
   return obj;
 }
 
-function uploadRequest(fileContent: string, filename = "notes.md") {
+function uploadRequest(
+  fileContent: string,
+  filename = "notes.md",
+  trimmed?: { unit: "pages" | "lines"; included: number; total: number },
+) {
   const form = new FormData();
   form.append("file", new File([fileContent], filename, { type: "text/markdown" }));
+  if (trimmed) {
+    form.append("trimmedUnit", trimmed.unit);
+    form.append("includedCount", String(trimmed.included));
+    form.append("sourceCount", String(trimmed.total));
+  }
   return new NextRequest("http://localhost/api/documents", { method: "POST", body: form });
 }
 
@@ -82,13 +91,30 @@ describe("POST /api/documents", () => {
   });
 
   it("creates the document row and every chunk row tagged with the authenticated user's id", async () => {
+    const trim = { unit: "lines" as const, included: 2, total: 5 };
     const insertedDoc = chainable({
-      data: { id: "doc-1", name: "notes.md", status: "processing", created_at: "2026-01-01" },
+      data: {
+        id: "doc-1",
+        name: "notes.md",
+        status: "processing",
+        created_at: "2026-01-01",
+        trimmed_unit: trim.unit,
+        included_count: trim.included,
+        source_count: trim.total,
+      },
       error: null,
     });
     const chunksInsert = chainable({ data: null, error: null });
     const updatedDoc = chainable({
-      data: { id: "doc-1", name: "notes.md", status: "ready", created_at: "2026-01-01" },
+      data: {
+        id: "doc-1",
+        name: "notes.md",
+        status: "ready",
+        created_at: "2026-01-01",
+        trimmed_unit: trim.unit,
+        included_count: trim.included,
+        source_count: trim.total,
+      },
       error: null,
     });
 
@@ -97,17 +123,43 @@ describe("POST /api/documents", () => {
       .mockImplementationOnce(() => chunksInsert as never) // chunks: insert
       .mockImplementationOnce(() => updatedDoc as never); // documents: mark ready
 
-    const res = await POST(uploadRequest("some notes content long enough to chunk"));
+    const res = await POST(
+      uploadRequest("some notes content long enough to chunk", "notes.md", trim),
+    );
 
     expect(res.status).toBe(200);
     expect(insertedDoc.insert).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: TEST_USER_ID }),
+      expect.objectContaining({
+        user_id: TEST_USER_ID,
+        trimmed_unit: "lines",
+        included_count: 2,
+        source_count: 5,
+      }),
     );
     expect(chunksInsert.insert).toHaveBeenCalledWith([
       expect.objectContaining({ user_id: TEST_USER_ID }),
     ]);
     // The "mark ready" update is scoped to this user, not just the doc id.
     expect(updatedDoc.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({ trimmed: { unit: "lines", included: 2, total: 5 } }),
+    );
+  });
+
+  it("rejects incomplete or inconsistent trim metadata", async () => {
+    const form = new FormData();
+    form.append("file", new File(["notes"], "notes.md", { type: "text/markdown" }));
+    form.append("trimmedUnit", "pages");
+    form.append("includedCount", "5");
+    form.append("sourceCount", "5");
+
+    const res = await POST(
+      new NextRequest("http://localhost/api/documents", { method: "POST", body: form }),
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Invalid trim metadata" });
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
   it("scopes the cleanup (chunk delete + status=failed update) to the authenticated user's id on ingestion failure", async () => {
@@ -149,13 +201,32 @@ describe("GET /api/documents", () => {
   });
 
   it("scopes the list query to the authenticated user's id", async () => {
-    const query = chainable({ data: [{ id: "d1", name: "a.pdf", status: "ready", created_at: "x" }], error: null });
+    const query = chainable({
+      data: [
+        {
+          id: "d1",
+          name: "a.pdf",
+          status: "ready",
+          created_at: "x",
+          trimmed_unit: "pages",
+          included_count: 3,
+          source_count: 8,
+        },
+      ],
+      error: null,
+    });
     mockFrom.mockReturnValue(query as never);
 
     const res = await GET();
 
     expect(res.status).toBe(200);
     expect(query.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
+    expect(query.select).toHaveBeenCalledWith(
+      "id, name, status, created_at, trimmed_unit, included_count, source_count",
+    );
+    await expect(res.json()).resolves.toEqual([
+      expect.objectContaining({ trimmed: { unit: "pages", included: 3, total: 8 } }),
+    ]);
   });
 
   it("a different authenticated user's list query is scoped to THEIR id, not another user's", async () => {

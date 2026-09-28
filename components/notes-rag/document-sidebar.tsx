@@ -6,14 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { RagDocument } from "@/lib/notes-rag-api";
-import { MAX_UPLOAD_SIZE_LABEL } from "@/lib/document-upload";
+import { formatTrimmedRange, MAX_UPLOAD_SIZE_LABEL } from "@/lib/document-upload";
 
 const ACCEPTED = ".pdf,.md,.markdown";
 
 const statusStyles: Record<RagDocument["status"], string> = {
   ready: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20",
-  processing:
-    "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20",
+  processing: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20",
   failed: "bg-destructive/10 text-destructive border-destructive/20",
 };
 
@@ -47,9 +46,7 @@ export function DocumentSidebar({
 
   const pickFiles = (list: FileList | null) => {
     if (!list) return;
-    const files = Array.from(list).filter((f) =>
-      /\.(pdf|md|markdown)$/i.test(f.name),
-    );
+    const files = Array.from(list).filter((f) => /\.(pdf|md|markdown)$/i.test(f.name));
     if (files.length) onUpload(files);
   };
 
@@ -106,7 +103,7 @@ export function DocumentSidebar({
               {uploading ? "Uploading…" : "Upload documents"}
             </span>
             <span className="text-xs text-muted-foreground">
-              PDF or Markdown · less than {MAX_UPLOAD_SIZE_LABEL}
+              PDF or Markdown · files over {MAX_UPLOAD_SIZE_LABEL} are trimmed
             </span>
           </button>
           <input
@@ -138,15 +135,22 @@ export function DocumentSidebar({
                   <FileText className="size-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{doc.name}</p>
-                    <Badge
-                      variant="outline"
-                      className={cn("mt-0.5 text-[10px]", statusStyles[doc.status])}
-                    >
-                      {doc.status === "processing" && (
-                        <Loader2 className="size-2.5 animate-spin" />
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      <Badge
+                        variant="outline"
+                        className={cn("text-[10px]", statusStyles[doc.status])}
+                      >
+                        {doc.status === "processing" && (
+                          <Loader2 className="size-2.5 animate-spin" />
+                        )}
+                        {statusLabels[doc.status]}
+                      </Badge>
+                      {doc.trimmed && (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                          {formatTrimmedRange(doc.trimmed)}
+                        </Badge>
                       )}
-                      {statusLabels[doc.status]}
-                    </Badge>
+                    </div>
                   </div>
                   <Button
                     variant="ghost"
