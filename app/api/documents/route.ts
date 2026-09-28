@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractText, getDocumentProxy } from "unpdf";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getAuthenticatedUser } from "@/lib/supabase-server";
 import { chunkText, countTokens, splitToTokenLimit, MAX_EMBED_TOKENS } from "@/lib/chunking";
 import { embed } from "@/lib/openrouter";
+import { extractPdfText } from "@/lib/pdf-text";
+import { FILE_SIZE_TOO_LARGE_MESSAGE, isUploadTooLarge } from "@/lib/document-upload";
 
 // unpdf bundles pdf.js, which needs the Node.js runtime (not Edge).
 export const runtime = "nodejs";
@@ -36,9 +37,7 @@ function isPdf(file: File): boolean {
 async function extractRawText(file: File): Promise<string> {
   if (isPdf(file)) {
     const buf = new Uint8Array(await file.arrayBuffer());
-    const pdf = await getDocumentProxy(buf);
-    const { text } = await extractText(pdf, { mergePages: true });
-    return text;
+    return extractPdfText(buf);
   }
   // Markdown / plain text: read as UTF-8.
   return file.text();
@@ -66,6 +65,10 @@ export async function POST(req: NextRequest) {
       { error: "No file provided under the 'file' field" },
       { status: 400 },
     );
+  }
+
+  if (isUploadTooLarge(file.size)) {
+    return NextResponse.json({ error: FILE_SIZE_TOO_LARGE_MESSAGE }, { status: 413 });
   }
 
   const name = file.name || "untitled";

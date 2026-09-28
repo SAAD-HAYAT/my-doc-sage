@@ -17,6 +17,7 @@ import { getAuthenticatedUser } from "@/lib/supabase-server";
 import { embed } from "@/lib/openrouter";
 import { GET, POST } from "@/app/api/documents/route";
 import { DELETE } from "@/app/api/documents/[id]/route";
+import { MAX_UPLOAD_SIZE_BYTES } from "@/lib/document-upload";
 
 const mockFrom = vi.mocked(supabaseAdmin.from);
 const mockGetAuthenticatedUser = vi.mocked(getAuthenticatedUser);
@@ -57,6 +58,26 @@ describe("POST /api/documents", () => {
     const res = await POST(uploadRequest("some notes"));
 
     expect(res.status).toBe(401);
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it("rejects files at the 4 MB limit before creating a document row", async () => {
+    const form = new FormData();
+    form.append(
+      "file",
+      new File([new Uint8Array(MAX_UPLOAD_SIZE_BYTES)], "large.pdf", {
+        type: "application/pdf",
+      }),
+    );
+    const request = new NextRequest("http://localhost/api/documents", {
+      method: "POST",
+      body: form,
+    });
+
+    const res = await POST(request);
+
+    expect(res.status).toBe(413);
+    await expect(res.json()).resolves.toEqual({ error: "File size too large" });
     expect(mockFrom).not.toHaveBeenCalled();
   });
 

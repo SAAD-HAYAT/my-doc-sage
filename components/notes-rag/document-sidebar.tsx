@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { RagDocument } from "@/lib/notes-rag-api";
+import { MAX_UPLOAD_SIZE_LABEL } from "@/lib/document-upload";
 
 const ACCEPTED = ".pdf,.md,.markdown";
 
@@ -105,7 +106,7 @@ export function DocumentSidebar({
               {uploading ? "Uploading…" : "Upload documents"}
             </span>
             <span className="text-xs text-muted-foreground">
-              PDF or Markdown · drop files here
+              PDF or Markdown · less than {MAX_UPLOAD_SIZE_LABEL}
             </span>
           </button>
           <input

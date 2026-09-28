@@ -8,11 +8,13 @@ import { DocumentSidebar } from "@/components/notes-rag/document-sidebar";
 import { ChatPanel } from "@/components/notes-rag/chat-panel";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
+  ApiError,
   chatApi,
   documentsApi,
   type ChatMessage,
   type RagDocument,
 } from "@/lib/notes-rag-api";
+import { FILE_SIZE_TOO_LARGE_MESSAGE, isUploadTooLarge } from "@/lib/document-upload";
 
 function newSessionId() {
   return crypto.randomUUID();
@@ -53,14 +55,24 @@ export default function Index() {
   }, [sessionId]);
 
   const handleUpload = useCallback(async (files: File[]) => {
+    const acceptedFiles = files.filter((file) => !isUploadTooLarge(file.size));
+    if (acceptedFiles.length !== files.length) {
+      toast.error(FILE_SIZE_TOO_LARGE_MESSAGE);
+    }
+    if (acceptedFiles.length === 0) return;
+
     setUploading(true);
     try {
-      for (const file of files) {
+      for (const file of acceptedFiles) {
         const doc = await documentsApi.upload(file);
         setDocuments((prev) => [doc, ...prev]);
       }
-    } catch {
-      toast.error("Upload failed. Please try again.");
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError && error.status === 413
+          ? FILE_SIZE_TOO_LARGE_MESSAGE
+          : "Upload failed. Please try again.",
+      );
     } finally {
       setUploading(false);
     }
