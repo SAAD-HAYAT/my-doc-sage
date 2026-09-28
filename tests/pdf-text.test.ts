@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  definePDFJSModule: vi.fn(async () => {}),
   extractText: vi.fn(),
   getDocumentProxy: vi.fn(),
   renderPageAsImage: vi.fn(),
@@ -9,7 +8,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("unpdf", () => ({
-  definePDFJSModule: mocks.definePDFJSModule,
   extractText: mocks.extractText,
   getDocumentProxy: mocks.getDocumentProxy,
   renderPageAsImage: mocks.renderPageAsImage,
