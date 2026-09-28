@@ -87,7 +87,9 @@ export default function Index() {
                   : "The document could not be trimmed below 4 MB.",
             });
           } else {
-            toast.error("Upload failed. Please try again.");
+            toast.error("Upload failed. Please try again.", {
+              description: error instanceof ApiError ? error.message : undefined,
+            });
           }
         }
       }

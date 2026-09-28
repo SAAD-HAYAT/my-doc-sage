@@ -77,6 +77,10 @@ uploading it. A trimmed upload also sends `trimmedUnit`, `includedCount`, and
 Response:
 `{ id: string, name: string, status: "processing" | "ready" | "failed", createdAt: string, trimmed: { unit: "pages" | "lines", included: number, total: number } | null }`
 Requires auth (see above): `401 { error: string }` with no valid session.
+If extraction, embedding, or chunk storage fails after the document row is
+created, the row is marked `failed` and the endpoint returns
+`500 { error: string, document: { ...status: "failed" } }`. The error identifies
+the failed ingestion stage rather than returning a misleading HTTP 200.
 
 ### `GET /api/documents`
 

@@ -210,12 +210,12 @@ describe("POST /api/documents", () => {
 
     const res = await POST(uploadRequest("some notes content long enough to chunk"));
 
-    // Route always returns 200 with status:"failed" in the body on an
-    // ingestion error (see app/api/documents/route.ts) -- not itself a
-    // Phase 7 concern, just confirming the scoped cleanup still ran.
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.status).toBe("failed");
+    expect(body.error).toMatch(
+      /^Document ingestion failed while embedding chunks: embedding service down$/,
+    );
+    expect(body.document.status).toBe("failed");
     expect(chunksDelete.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
     expect(failedUpdate.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
   });

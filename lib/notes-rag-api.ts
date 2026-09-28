@@ -42,7 +42,16 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new ApiError(res.status, body || `Request failed (${res.status})`);
+    let message = body || `Request failed (${res.status})`;
+    try {
+      const parsed = JSON.parse(body) as { error?: unknown };
+      if (typeof parsed.error === "string" && parsed.error.length > 0) {
+        message = parsed.error;
+      }
+    } catch {
+      // Non-JSON error responses keep their original response text.
+    }
+    throw new ApiError(res.status, message);
   }
   // 204 No Content (e.g. DELETE) has an empty body — don't try to parse it.
   if (res.status === 204) {
