@@ -113,3 +113,63 @@ describe("embed() — API key fallback", () => {
     await expect(embed("hello")).rejects.toThrow(/Missing OPENROUTER_API_KEY/);
   });
 });
+
+describe("embedMany() — batched inputs", () => {
+  it("sends all inputs in one request and restores response index order", async () => {
+    process.env.OPENROUTER_API_KEY = "key-1";
+    delete process.env.OPENROUTER_API_KEY_2;
+    const { embedMany } = await import("@/lib/openrouter");
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          { index: 1, embedding: [2] },
+          { index: 0, embedding: [1] },
+          { index: 2, embedding: [3] },
+        ],
+      }),
+    );
+
+    await expect(embedMany(["one", "two", "three"])).resolves.toEqual([[1], [2], [3]]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      model: "liquid/lfm-2.5-embedding-350m:free",
+      input: ["one", "two", "three"],
+    });
+  });
+
+  it("returns immediately for an empty input list", async () => {
+    process.env.OPENROUTER_API_KEY = "key-1";
+    const { embedMany } = await import("@/lib/openrouter");
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(embedMany([])).resolves.toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("splits more than 128 inputs into provider-sized requests", async () => {
+    process.env.OPENROUTER_API_KEY = "key-1";
+    delete process.env.OPENROUTER_API_KEY_2;
+    const { embedMany } = await import("@/lib/openrouter");
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { input: string[] };
+      return jsonResponse(200, {
+        data: body.input.map((_, index) => ({ index, embedding: [index] })),
+      });
+    });
+
+    const inputs = Array.from({ length: 130 }, (_, index) => `chunk-${index}`);
+    const result = await embedMany(inputs);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      fetchMock.mock.calls.map(
+        ([, init]) => (JSON.parse(String(init?.body)) as { input: string[] }).input.length,
+      ),
+    ).toEqual([128, 2]);
+    expect(result).toHaveLength(130);
+    expect(result[128]).toEqual([0]);
+    expect(result[129]).toEqual([1]);
+  });
+});

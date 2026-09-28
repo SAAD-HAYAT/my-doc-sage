@@ -31,6 +31,8 @@ chatbot received.
 - [x] Persist trim metadata with each document.
 - [x] Show `Trimmed: pages 1–N of M` beside trimmed PDFs.
 - [x] Validate trim metadata at the API boundary.
+- [x] Batch embeddings and database inserts so large retained prefixes do not
+      require hundreds of sequential network requests.
 - [x] Add focused unit and route tests.
 
 ## Acceptance criteria
