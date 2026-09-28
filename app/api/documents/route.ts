@@ -145,8 +145,10 @@ export async function POST(req: NextRequest) {
   const doc = created as DocumentRow;
 
   // 2. Extract -> chunk -> embed -> store. On any failure, mark "failed".
+  let ingestionStage = "extracting text";
   try {
     const text = await extractRawText(file);
+    ingestionStage = "chunking text";
     const baseChunks = chunkText(text);
 
     if (baseChunks.length === 0) {
@@ -171,6 +173,7 @@ export async function POST(req: NextRequest) {
     // trimmed PDF can still contain hundreds of chunks, so batching here avoids
     // one network request per chunk (and the corresponding serverless timeout /
     // free-tier request-quota failure mode).
+    ingestionStage = "embedding chunks";
     const embeddings = await embedMany(chunks);
     const rows = chunks.map((content, index) => ({
       document_id: doc.id,
@@ -181,6 +184,7 @@ export async function POST(req: NextRequest) {
 
     // Keep each PostgREST request bounded: hundreds of 1024-dimensional
     // vectors can otherwise produce a multi-megabyte JSON request body.
+    ingestionStage = "storing chunks";
     for (let start = 0; start < rows.length; start += CHUNK_INSERT_BATCH_SIZE) {
       const { error: chunkError } = await supabaseAdmin
         .from("chunks")
@@ -188,6 +192,7 @@ export async function POST(req: NextRequest) {
       if (chunkError) throw new Error(chunkError.message);
     }
 
+    ingestionStage = "finalizing the document";
     const { data: updated, error: updateError } = await supabaseAdmin
       .from("documents")
       .update({ status: "ready" })
@@ -208,8 +213,13 @@ export async function POST(req: NextRequest) {
       .update({ status: "failed" })
       .eq("id", doc.id)
       .eq("user_id", user.id);
-    console.error(`Document ingestion failed for ${doc.id}:`, err);
-    return NextResponse.json(shape({ ...doc, status: "failed" }));
+    const detail = err instanceof Error ? err.message : String(err);
+    const errorMessage = `Document ingestion failed while ${ingestionStage}: ${detail}`;
+    console.error(`${errorMessage} (document ${doc.id})`, err);
+    return NextResponse.json(
+      { error: errorMessage, document: shape({ ...doc, status: "failed" }) },
+      { status: 500 },
+    );
   }
 }
 
