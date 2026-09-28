@@ -97,13 +97,11 @@ documents and their own chat history — never another user's.
       `tests/tools.test.ts` / `tests/agent.test.ts` for the new
       `userId` parameters threaded through `retrieve()` /
       `executeTool()` / `runAgentLoop()`.
-- [ ] Live verification: sign in with one real Google account, upload
+- [x] Live verification: sign in with one real Google account, upload
       a document, ask a question; sign in with a second, different
       Google account and confirm it sees zero documents and gets no
       history from the first account's `sessionId` even pasted in
-      directly. **Not yet run** — held for the user to do (or ask for)
-      once the publishable/anon key is in `.env` and Google sign-in has
-      actually been exercised once.
+      directly. Completed successfully by the user before Phase 8 began.
 
 ## One-time manual step before the schema changes apply
 

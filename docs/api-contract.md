@@ -64,7 +64,10 @@ UI. No auth needed yet.
 ## Endpoints
 
 ### `POST /api/documents`
-Multipart file upload (PDF or Markdown).
+
+Multipart file upload (PDF or Markdown). Files must be smaller than 4 MiB;
+oversized requests return `413 { "error": "File size too large" }`. PDFs use
+their embedded text layer when available and OCR for scanned/image-only pages.
 Response: `{ id: string, name: string, status: "processing" | "ready" | "failed", createdAt: string }`
 Requires auth (see above): `401 { error: string }` with no valid session.
 
