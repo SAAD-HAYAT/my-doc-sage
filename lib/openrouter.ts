@@ -4,6 +4,7 @@
 const OPENROUTER_URL = "https://openrouter.ai/api/v1";
 
 const EMBEDDING_MODEL = "liquid/lfm-2.5-embedding-350m:free";
+const EMBEDDING_BATCH_SIZE = 128;
 
 // AGENTS.md specifies "openai/gpt-oss-120b:free" (dead, 404s on every
 // request) or, failing that, the bare "openrouter/free" router. We stopped
@@ -49,8 +50,7 @@ const CHAT_MODELS = [
 // ENTIRELY a bare safety/moderation verdict, nothing else. Deliberately
 // anchored (^...$) so it can never match a real answer that merely
 // mentions "safe" in passing.
-const SAFETY_VERDICT_ONLY =
-  /^(?:(?:user|content)\s+safety\s*[:\-]\s*)?(?:safe|unsafe)\.?$/i;
+const SAFETY_VERDICT_ONLY = /^(?:(?:user|content)\s+safety\s*[:-]\s*)?(?:safe|unsafe)\.?$/i;
 
 function isSafetyVerdictOnly(content: string): boolean {
   return SAFETY_VERDICT_ONLY.test(content.trim());
@@ -124,9 +124,7 @@ let activeKeyIndex = 0;
 function currentKey(): string {
   const keys = configuredKeys();
   if (keys.length === 0) {
-    throw new Error(
-      "Missing OPENROUTER_API_KEY — copy .env.example to .env and fill it in.",
-    );
+    throw new Error("Missing OPENROUTER_API_KEY — copy .env.example to .env and fill it in.");
   }
   // Clamp in case OPENROUTER_API_KEY_2 was removed after we'd switched to it.
   if (activeKeyIndex >= keys.length) activeKeyIndex = keys.length - 1;
@@ -171,24 +169,58 @@ async function fetchWithKeyFallback(
   return res;
 }
 
-export async function embed(text: string): Promise<number[]> {
-  const res = await fetchWithKeyFallback((key) =>
-    fetch(`${OPENROUTER_URL}/embeddings`, {
-      method: "POST",
-      headers: headers(key),
-      body: JSON.stringify({ model: EMBEDDING_MODEL, input: text }),
-    }),
-  );
+export async function embedMany(texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
 
-  if (!res.ok) throw await errorFrom(res, "embeddings");
-
-  const json = (await res.json()) as { data?: { embedding?: number[] }[] };
-  const embedding = json.data?.[0]?.embedding;
-  if (!Array.isArray(embedding) || embedding.length === 0) {
-    throw new Error(
-      `OpenRouter embeddings returned no vector: ${JSON.stringify(json).slice(0, 500)}`,
+  const embeddings: number[][] = [];
+  for (let start = 0; start < texts.length; start += EMBEDDING_BATCH_SIZE) {
+    const batch = texts.slice(start, start + EMBEDDING_BATCH_SIZE);
+    const res = await fetchWithKeyFallback((key) =>
+      fetch(`${OPENROUTER_URL}/embeddings`, {
+        method: "POST",
+        headers: headers(key),
+        body: JSON.stringify({ model: EMBEDDING_MODEL, input: batch }),
+      }),
     );
+
+    if (!res.ok) throw await errorFrom(res, "embeddings");
+
+    const json = (await res.json()) as {
+      data?: { embedding?: number[]; index?: number }[];
+    };
+    if (!Array.isArray(json.data) || json.data.length !== batch.length) {
+      throw new Error(
+        `OpenRouter embeddings returned ${json.data?.length ?? 0} vectors for ${batch.length} inputs: ${JSON.stringify(json).slice(0, 500)}`,
+      );
+    }
+
+    const batchEmbeddings = new Array<number[]>(batch.length);
+    for (let responseIndex = 0; responseIndex < json.data.length; responseIndex += 1) {
+      const item: { embedding?: number[]; index?: number } = json.data[responseIndex];
+      const inputIndex = item.index ?? responseIndex;
+      if (
+        !Number.isSafeInteger(inputIndex) ||
+        inputIndex < 0 ||
+        inputIndex >= batch.length ||
+        batchEmbeddings[inputIndex] !== undefined ||
+        !Array.isArray(item.embedding) ||
+        item.embedding.length === 0
+      ) {
+        throw new Error(
+          `OpenRouter embeddings returned an invalid vector at response index ${responseIndex}: ${JSON.stringify(item).slice(0, 500)}`,
+        );
+      }
+      batchEmbeddings[inputIndex] = item.embedding;
+    }
+
+    embeddings.push(...batchEmbeddings);
   }
+
+  return embeddings;
+}
+
+export async function embed(text: string): Promise<number[]> {
+  const [embedding] = await embedMany([text]);
   return embedding;
 }
 

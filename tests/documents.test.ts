@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // app/api/documents/route.ts and [id]/route.ts pull in @/lib/supabase,
-// @/lib/supabase-server, and @/lib/openrouter (for embed()) -- mock all
+// @/lib/supabase-server, and @/lib/openrouter (for embedMany()) -- mock all
 // three so this file costs zero API/DB calls. Phase 7 focus: these tests
 // cover the auth gate (401 with no session) and that every query/insert
 // is scoped to the authenticated user's id -- NOT a full re-test of the
@@ -10,18 +10,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // phase and is unchanged here besides the added user_id.
 vi.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: vi.fn() } }));
 vi.mock("@/lib/supabase-server", () => ({ getAuthenticatedUser: vi.fn() }));
-vi.mock("@/lib/openrouter", () => ({ embed: vi.fn() }));
+vi.mock("@/lib/openrouter", () => ({ embedMany: vi.fn() }));
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { getAuthenticatedUser } from "@/lib/supabase-server";
-import { embed } from "@/lib/openrouter";
+import { embedMany } from "@/lib/openrouter";
 import { GET, POST } from "@/app/api/documents/route";
 import { DELETE } from "@/app/api/documents/[id]/route";
 import { MAX_UPLOAD_SIZE_BYTES } from "@/lib/document-upload";
 
 const mockFrom = vi.mocked(supabaseAdmin.from);
 const mockGetAuthenticatedUser = vi.mocked(getAuthenticatedUser);
-const mockEmbed = vi.mocked(embed);
+const mockEmbedMany = vi.mocked(embedMany);
 
 const TEST_USER_ID = "test-user-id";
 const OTHER_USER_ID = "someone-elses-user-id";
@@ -57,7 +57,7 @@ function uploadRequest(
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetAuthenticatedUser.mockResolvedValue({ id: TEST_USER_ID } as never);
-  mockEmbed.mockResolvedValue([0.1, 0.2, 0.3]);
+  mockEmbedMany.mockImplementation(async (texts) => texts.map(() => [0.1, 0.2, 0.3]));
 });
 
 describe("POST /api/documents", () => {
@@ -162,6 +162,37 @@ describe("POST /api/documents", () => {
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
+  it("stores a large document's vectors in bounded database batches", async () => {
+    const insertedDoc = chainable({
+      data: { id: "doc-large", name: "large.md", status: "processing", created_at: "2026-01-01" },
+      error: null,
+    });
+    const firstChunkBatch = chainable({ data: null, error: null });
+    const secondChunkBatch = chainable({ data: null, error: null });
+    const updatedDoc = chainable({
+      data: { id: "doc-large", name: "large.md", status: "ready", created_at: "2026-01-01" },
+      error: null,
+    });
+
+    mockFrom
+      .mockImplementationOnce(() => insertedDoc as never)
+      .mockImplementationOnce(() => firstChunkBatch as never)
+      .mockImplementationOnce(() => secondChunkBatch as never)
+      .mockImplementationOnce(() => updatedDoc as never);
+
+    const res = await POST(uploadRequest("word ".repeat(16_000), "large.md"));
+
+    expect(res.status).toBe(200);
+    const firstInsert = firstChunkBatch.insert as ReturnType<typeof vi.fn>;
+    const secondInsert = secondChunkBatch.insert as ReturnType<typeof vi.fn>;
+    const firstRows = firstInsert.mock.calls[0][0] as unknown[];
+    const secondRows = secondInsert.mock.calls[0][0] as unknown[];
+    expect(firstRows).toHaveLength(50);
+    expect(secondRows.length).toBeGreaterThan(0);
+    expect(secondRows.length).toBeLessThanOrEqual(50);
+    expect(firstRows.length + secondRows.length).toBeGreaterThan(50);
+  });
+
   it("scopes the cleanup (chunk delete + status=failed update) to the authenticated user's id on ingestion failure", async () => {
     const insertedDoc = chainable({
       data: { id: "doc-1", name: "notes.md", status: "processing", created_at: "2026-01-01" },
@@ -175,7 +206,7 @@ describe("POST /api/documents", () => {
       .mockImplementationOnce(() => chunksDelete as never)
       .mockImplementationOnce(() => failedUpdate as never);
 
-    mockEmbed.mockRejectedValue(new Error("embedding service down"));
+    mockEmbedMany.mockRejectedValue(new Error("embedding service down"));
 
     const res = await POST(uploadRequest("some notes content long enough to chunk"));
 

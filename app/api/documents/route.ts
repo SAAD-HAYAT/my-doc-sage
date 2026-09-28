@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getAuthenticatedUser } from "@/lib/supabase-server";
 import { chunkText, countTokens, splitToTokenLimit, MAX_EMBED_TOKENS } from "@/lib/chunking";
-import { embed } from "@/lib/openrouter";
+import { embedMany } from "@/lib/openrouter";
 import { extractPdfText } from "@/lib/pdf-text";
 import {
   FILE_SIZE_TOO_LARGE_MESSAGE,
@@ -13,6 +13,8 @@ import {
 
 // unpdf bundles pdf.js, which needs the Node.js runtime (not Edge).
 export const runtime = "nodejs";
+
+const CHUNK_INSERT_BATCH_SIZE = 50;
 
 // Phase 7: both handlers below require an authenticated session and
 // scope every query/insert to that user's id explicitly.
@@ -165,14 +167,26 @@ export async function POST(req: NextRequest) {
       chunks.push(...safe);
     }
 
-    const rows = [];
-    for (const content of chunks) {
-      const embedding = await embed(content);
-      rows.push({ document_id: doc.id, user_id: user.id, content, embedding });
-    }
+    // OpenRouter accepts an array of inputs in one embeddings request. A large
+    // trimmed PDF can still contain hundreds of chunks, so batching here avoids
+    // one network request per chunk (and the corresponding serverless timeout /
+    // free-tier request-quota failure mode).
+    const embeddings = await embedMany(chunks);
+    const rows = chunks.map((content, index) => ({
+      document_id: doc.id,
+      user_id: user.id,
+      content,
+      embedding: embeddings[index],
+    }));
 
-    const { error: chunkError } = await supabaseAdmin.from("chunks").insert(rows);
-    if (chunkError) throw new Error(chunkError.message);
+    // Keep each PostgREST request bounded: hundreds of 1024-dimensional
+    // vectors can otherwise produce a multi-megabyte JSON request body.
+    for (let start = 0; start < rows.length; start += CHUNK_INSERT_BATCH_SIZE) {
+      const { error: chunkError } = await supabaseAdmin
+        .from("chunks")
+        .insert(rows.slice(start, start + CHUNK_INSERT_BATCH_SIZE));
+      if (chunkError) throw new Error(chunkError.message);
+    }
 
     const { data: updated, error: updateError } = await supabaseAdmin
       .from("documents")
