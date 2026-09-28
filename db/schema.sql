@@ -5,6 +5,9 @@ create table if not exists documents (
   user_id uuid references auth.users(id) on delete cascade not null,
   name text not null,
   status text not null default 'processing', -- processing | ready | failed
+  trimmed_unit text,
+  included_count integer,
+  source_count integer,
   created_at timestamptz not null default now()
 );
 
@@ -36,6 +39,9 @@ create table if not exists chunks (
 alter table chunks add column if not exists content_tsv tsvector
   generated always as (to_tsvector('english', content)) stored;
 alter table documents add column if not exists user_id uuid references auth.users(id) on delete cascade not null;
+alter table documents add column if not exists trimmed_unit text;
+alter table documents add column if not exists included_count integer;
+alter table documents add column if not exists source_count integer;
 alter table chunks add column if not exists user_id uuid references auth.users(id) on delete cascade not null;
 
 create index if not exists chunks_embedding_idx

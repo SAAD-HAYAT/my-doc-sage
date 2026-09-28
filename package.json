@@ -61,6 +61,7 @@
     "motion": "^13.2.0",
     "nanoid": "^6.0.1",
     "next": "^15.5.0",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.2.0",
     "react-day-picker": "^9.14.0",

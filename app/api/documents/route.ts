@@ -4,7 +4,12 @@ import { getAuthenticatedUser } from "@/lib/supabase-server";
 import { chunkText, countTokens, splitToTokenLimit, MAX_EMBED_TOKENS } from "@/lib/chunking";
 import { embed } from "@/lib/openrouter";
 import { extractPdfText } from "@/lib/pdf-text";
-import { FILE_SIZE_TOO_LARGE_MESSAGE, isUploadTooLarge } from "@/lib/document-upload";
+import {
+  FILE_SIZE_TOO_LARGE_MESSAGE,
+  isUploadTooLarge,
+  type TrimmedRange,
+  type TrimmedUnit,
+} from "@/lib/document-upload";
 
 // unpdf bundles pdf.js, which needs the Node.js runtime (not Edge).
 export const runtime = "nodejs";
@@ -17,6 +22,9 @@ type DocumentRow = {
   name: string;
   status: "processing" | "ready" | "failed";
   created_at: string;
+  trimmed_unit: TrimmedUnit | null;
+  included_count: number | null;
+  source_count: number | null;
 };
 
 function shape(row: DocumentRow) {
@@ -25,13 +33,48 @@ function shape(row: DocumentRow) {
     name: row.name,
     status: row.status,
     createdAt: row.created_at,
+    trimmed:
+      row.trimmed_unit && row.included_count !== null && row.source_count !== null
+        ? {
+            unit: row.trimmed_unit,
+            included: row.included_count,
+            total: row.source_count,
+          }
+        : null,
   };
 }
 
+function parseTrimmedRange(form: FormData): TrimmedRange | null | "invalid" {
+  const unit = form.get("trimmedUnit");
+  const includedRaw = form.get("includedCount");
+  const totalRaw = form.get("sourceCount");
+
+  if (unit === null && includedRaw === null && totalRaw === null) return null;
+  if (
+    (unit !== "pages" && unit !== "lines") ||
+    typeof includedRaw !== "string" ||
+    typeof totalRaw !== "string"
+  ) {
+    return "invalid";
+  }
+
+  const included = Number(includedRaw);
+  const total = Number(totalRaw);
+  if (
+    !Number.isSafeInteger(included) ||
+    !Number.isSafeInteger(total) ||
+    included < 1 ||
+    total < 1 ||
+    included >= total
+  ) {
+    return "invalid";
+  }
+
+  return { unit, included, total };
+}
+
 function isPdf(file: File): boolean {
-  return (
-    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
-  );
+  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 }
 
 async function extractRawText(file: File): Promise<string> {
@@ -53,22 +96,25 @@ export async function POST(req: NextRequest) {
   try {
     form = await req.formData();
   } catch {
-    return NextResponse.json(
-      { error: "Expected multipart/form-data" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Expected multipart/form-data" }, { status: 400 });
   }
 
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0) {
-    return NextResponse.json(
-      { error: "No file provided under the 'file' field" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "No file provided under the 'file' field" }, { status: 400 });
   }
 
   if (isUploadTooLarge(file.size)) {
     return NextResponse.json({ error: FILE_SIZE_TOO_LARGE_MESSAGE }, { status: 413 });
+  }
+
+  const trimmed = parseTrimmedRange(form);
+  if (
+    trimmed === "invalid" ||
+    (trimmed !== null &&
+      ((isPdf(file) && trimmed.unit !== "pages") || (!isPdf(file) && trimmed.unit !== "lines")))
+  ) {
+    return NextResponse.json({ error: "Invalid trim metadata" }, { status: 400 });
   }
 
   const name = file.name || "untitled";
@@ -76,7 +122,14 @@ export async function POST(req: NextRequest) {
   // 1. Create the document row up front so the UI can show "processing".
   const { data: created, error: insertError } = await supabaseAdmin
     .from("documents")
-    .insert({ name, status: "processing", user_id: user.id })
+    .insert({
+      name,
+      status: "processing",
+      user_id: user.id,
+      trimmed_unit: trimmed?.unit ?? null,
+      included_count: trimmed?.included ?? null,
+      source_count: trimmed?.total ?? null,
+    })
     .select()
     .single();
 
@@ -154,7 +207,7 @@ export async function GET() {
 
   const { data, error } = await supabaseAdmin
     .from("documents")
-    .select("id, name, status, created_at")
+    .select("id, name, status, created_at, trimmed_unit, included_count, source_count")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 

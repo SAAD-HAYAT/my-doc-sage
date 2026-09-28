@@ -68,24 +68,36 @@ UI. No auth needed yet.
 Multipart file upload (PDF or Markdown). Files must be smaller than 4 MiB;
 oversized requests return `413 { "error": "File size too large" }`. PDFs use
 their embedded text layer when available and OCR for scanned/image-only pages.
-Response: `{ id: string, name: string, status: "processing" | "ready" | "failed", createdAt: string }`
+The browser trims an oversized PDF to the largest complete page prefix below
+that limit (or an oversized Markdown file to complete leading lines) before
+uploading it. A trimmed upload also sends `trimmedUnit`, `includedCount`, and
+`sourceCount` multipart fields; inconsistent metadata returns
+`400 { "error": "Invalid trim metadata" }`.
+
+Response:
+`{ id: string, name: string, status: "processing" | "ready" | "failed", createdAt: string, trimmed: { unit: "pages" | "lines", included: number, total: number } | null }`
 Requires auth (see above): `401 { error: string }` with no valid session.
 
 ### `GET /api/documents`
-Response: array of the above (only the requesting user's documents).
+
+Response: array of the above, including persistent trim metadata (only the
+requesting user's documents).
 Requires auth: `401 { error: string }` with no valid session.
 
 ### `DELETE /api/documents/:id`
+
 Response: `204 No Content`
 Requires auth: `401 { error: string }` with no valid session. Deleting
 another user's document id is a no-op (scoped by user_id), not a 403/404.
 
 ### `POST /api/chat`
+
 Body: `{ message: string, sessionId: string }`
 Response: `{ answer: string, sources: { documentName: string, chunkText: string, score: number }[] }`
 Requires auth: `401 { error: string }` with no valid session.
 
 ### `GET /api/chat/:sessionId`
+
 Response: array of `{ role: "user" | "assistant", content: string, sources?: [...], createdAt: string }`
 (only the requesting user's own messages for that session).
 Requires auth: `401 { error: string }` with no valid session.
