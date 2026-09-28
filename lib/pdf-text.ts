@@ -1,17 +1,10 @@
-import { definePDFJSModule, extractText, getDocumentProxy, renderPageAsImage } from "unpdf";
+import { extractText, getDocumentProxy, renderPageAsImage } from "unpdf";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const MIN_NATIVE_TEXT_CHARACTERS = 20;
 const OCR_RENDER_SCALE = 2;
-
-let pdfJsReady: Promise<void> | undefined;
-
-function ensurePdfJs() {
-  pdfJsReady ??= definePDFJSModule(() => import("pdfjs-dist/legacy/build/pdf.mjs"));
-  return pdfJsReady;
-}
 
 function hasUsefulNativeText(text: string): boolean {
   return text.replace(/\s/g, "").length >= MIN_NATIVE_TEXT_CHARACTERS;
@@ -24,8 +17,8 @@ function hasUsefulNativeText(text: string): boolean {
  * where only some pages are scans.
  */
 export async function extractPdfText(data: Uint8Array): Promise<string> {
-  await ensurePdfJs();
-
+  // Use unpdf's default serverless build. Its PDF.js worker is inlined, so
+  // Vercel does not need to locate a separate pdf.worker.mjs at runtime.
   const pdf = await getDocumentProxy(data, {
     maxImageSize: 16_777_216,
   });

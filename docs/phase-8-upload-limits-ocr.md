@@ -17,6 +17,9 @@ text-native and scanned/image-only PDFs.
 - The API independently enforces the same limit and returns HTTP 413.
 - PDF extraction is hybrid: preserve embedded text when a page has it; render
   sparse/image-only pages and OCR them with Tesseract.js.
+- PDF parsing uses unpdf's worker-inlined serverless build. Do not override it
+  with `pdfjs-dist` in the API route: Vercel does not automatically include the
+  separate `pdf.worker.mjs` needed by that build.
 - OCR defaults to English printed text. Corrupt, password-protected, or
   unsupported-encryption PDFs can still fail cleanly; no OCR engine can
   guarantee successful extraction from literally every possible PDF.
