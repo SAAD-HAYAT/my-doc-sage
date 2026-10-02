@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import type { RagDocument } from "@/lib/notes-rag-api";
 import { formatTrimmedRange, MAX_UPLOAD_SIZE_LABEL } from "@/lib/document-upload";
 
-const ACCEPTED = ".pdf,.md,.markdown";
+const ACCEPTED = ".pdf,.md,.markdown,.xlsx";
 
 const statusStyles: Record<RagDocument["status"], string> = {
   ready: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20",
@@ -46,7 +46,7 @@ export function DocumentSidebar({
 
   const pickFiles = (list: FileList | null) => {
     if (!list) return;
-    const files = Array.from(list).filter((f) => /\.(pdf|md|markdown)$/i.test(f.name));
+    const files = Array.from(list).filter((f) => /\.(pdf|md|markdown|xlsx)$/i.test(f.name));
     if (files.length) onUpload(files);
   };
 
@@ -103,7 +103,7 @@ export function DocumentSidebar({
               {uploading ? "Uploading…" : "Upload documents"}
             </span>
             <span className="text-xs text-muted-foreground">
-              PDF or Markdown · files over {MAX_UPLOAD_SIZE_LABEL} are trimmed
+              PDF, Markdown, or Excel · files over {MAX_UPLOAD_SIZE_LABEL} are trimmed
             </span>
           </button>
           <input

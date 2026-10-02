@@ -36,7 +36,7 @@ frontend-only, wired to a REST API I'm building separately.
 
 Layout:
 - Left sidebar (collapsible on mobile):
-  - "Upload" button/drop zone accepting PDF and Markdown files
+  - "Upload" button/drop zone accepting PDF, Markdown, and Excel `.xlsx` files
   - List of uploaded documents showing name + status badge (Processing / Ready / Failed)
   - Delete icon per document
 - Main panel: chat interface
@@ -45,7 +45,7 @@ Layout:
     documents/chunks were used
   - Message input at the bottom with a send button, disabled while a response is loading
   - Empty state when no documents are uploaded yet, prompting to upload first
-- Top bar: app name + a "New chat" button that clears the current session
+- Top bar: app name + What's new, New chat, and Log out controls
 
 Wire the UI to these exact REST endpoints (I'll implement the backend — just
 call them and handle loading/error states):
@@ -65,17 +65,24 @@ UI. No auth needed yet.
 
 ### `POST /api/documents`
 
-Multipart file upload (PDF or Markdown). Files must be smaller than 4 MiB;
+Multipart file upload (PDF, Markdown, or Excel `.xlsx`). Files must be smaller than 4 MiB;
 oversized requests return `413 { "error": "File size too large" }`. PDFs use
 their embedded text layer when available and OCR for scanned/image-only pages.
 The browser trims an oversized PDF to the largest complete page prefix below
-that limit (or an oversized Markdown file to complete leading lines) before
-uploading it. A trimmed upload also sends `trimmedUnit`, `includedCount`, and
+that limit, an oversized Markdown file to complete leading lines, or an
+oversized Excel workbook to complete populated rows in worksheet order before
+uploading it. Excel formatting and media are removed during optimization; cell
+values, sheet names, row numbers, formulas, and cached formula results are
+indexed. A trimmed upload also sends `trimmedUnit`, `includedCount`, and
 `sourceCount` multipart fields; inconsistent metadata returns
 `400 { "error": "Invalid trim metadata" }`.
 
+Unsupported extensions (including `.xls`, `.xlsm`, and CSV) return HTTP 415.
+Malformed, encrypted, or empty Excel workbooks return HTTP 400 before a
+document row is created.
+
 Response:
-`{ id: string, name: string, status: "processing" | "ready" | "failed", createdAt: string, trimmed: { unit: "pages" | "lines", included: number, total: number } | null }`
+`{ id: string, name: string, status: "processing" | "ready" | "failed", createdAt: string, trimmed: { unit: "pages" | "lines" | "rows", included: number, total: number } | null }`
 Requires auth (see above): `401 { error: string }` with no valid session.
 If extraction, embedding, or chunk storage fails after the document row is
 created, the row is marked `failed` and the endpoint returns

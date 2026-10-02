@@ -1,4 +1,5 @@
 import { isUploadTooLarge, MAX_UPLOAD_SIZE_BYTES, type TrimmedRange } from "@/lib/document-upload";
+import { EXCEL_MIME_TYPE, isExcelFile, trimSpreadsheetToSize } from "@/lib/spreadsheet";
 import type { PDFDocument as PdfLibDocument } from "pdf-lib";
 
 export interface PreparedDocumentUpload {
@@ -110,6 +111,22 @@ async function trimMarkdown(file: File, maxBytes: number): Promise<PreparedDocum
   };
 }
 
+async function trimSpreadsheet(file: File, maxBytes: number): Promise<PreparedDocumentUpload> {
+  const result = await trimSpreadsheetToSize(await file.arrayBuffer(), maxBytes);
+  const wasOptimized = result.includedRows === result.totalRows;
+  const bytes = Uint8Array.from(result.bytes);
+  return {
+    file: new File([bytes], file.name, {
+      type: EXCEL_MIME_TYPE,
+      lastModified: file.lastModified,
+    }),
+    trimmed: wasOptimized
+      ? null
+      : { unit: "rows", included: result.includedRows, total: result.totalRows },
+    wasOptimized,
+  };
+}
+
 export async function prepareDocumentUpload(
   file: File,
   maxBytes = MAX_UPLOAD_SIZE_BYTES,
@@ -118,5 +135,7 @@ export async function prepareDocumentUpload(
     return { file, trimmed: null, wasOptimized: false };
   }
 
-  return isPdf(file) ? trimPdf(file, maxBytes) : trimMarkdown(file, maxBytes);
+  if (isPdf(file)) return trimPdf(file, maxBytes);
+  if (isExcelFile(file)) return trimSpreadsheet(file, maxBytes);
+  return trimMarkdown(file, maxBytes);
 }

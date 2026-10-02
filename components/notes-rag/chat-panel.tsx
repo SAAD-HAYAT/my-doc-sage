@@ -71,8 +71,8 @@ function EmptyState({ onOpenSidebar }: { onOpenSidebar: () => void }) {
       </div>
       <h2 className="text-lg font-semibold">Upload your first document</h2>
       <p className="max-w-sm text-sm text-muted-foreground">
-        NotesRAG answers questions using your own documents. Upload a PDF or
-        Markdown file in the sidebar, then ask anything.
+        NotesRAG answers questions using your own documents. Upload a PDF,
+        Markdown, or Excel file in the sidebar, then ask anything.
       </p>
       <button
         type="button"

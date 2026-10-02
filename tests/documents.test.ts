@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import ExcelJS from "exceljs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // app/api/documents/route.ts and [id]/route.ts pull in @/lib/supabase,
@@ -42,10 +43,33 @@ function chainable(result: { data: unknown; error: unknown }) {
 function uploadRequest(
   fileContent: string,
   filename = "notes.md",
-  trimmed?: { unit: "pages" | "lines"; included: number; total: number },
+  trimmed?: { unit: "pages" | "lines" | "rows"; included: number; total: number },
 ) {
   const form = new FormData();
   form.append("file", new File([fileContent], filename, { type: "text/markdown" }));
+  if (trimmed) {
+    form.append("trimmedUnit", trimmed.unit);
+    form.append("includedCount", String(trimmed.included));
+    form.append("sourceCount", String(trimmed.total));
+  }
+  return new NextRequest("http://localhost/api/documents", { method: "POST", body: form });
+}
+
+async function excelUploadRequest(
+  rows: unknown[][],
+  trimmed?: { unit: "pages" | "lines" | "rows"; included: number; total: number },
+) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Data");
+  for (const row of rows) worksheet.addRow(row);
+  const bytes = new Uint8Array(await workbook.xlsx.writeBuffer());
+  const form = new FormData();
+  form.append(
+    "file",
+    new File([bytes], "data.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+  );
   if (trimmed) {
     form.append("trimmedUnit", trimmed.unit);
     form.append("includedCount", String(trimmed.included));
@@ -87,6 +111,103 @@ describe("POST /api/documents", () => {
 
     expect(res.status).toBe(413);
     await expect(res.json()).resolves.toEqual({ error: "File size too large" });
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsupported file extensions before creating a document row", async () => {
+    for (const [name, type] of [
+      ["legacy.xls", "application/vnd.ms-excel"],
+      ["macros.xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12"],
+      ["table.csv", "text/csv"],
+      ["notes.txt", "text/plain"],
+    ]) {
+      const form = new FormData();
+      form.append("file", new File(["unsupported"], name, { type }));
+      const res = await POST(
+        new NextRequest("http://localhost/api/documents", { method: "POST", body: form }),
+      );
+
+      expect(res.status).toBe(415);
+      await expect(res.json()).resolves.toEqual({
+        error: "Unsupported file type. Upload a PDF, Markdown, or Excel (.xlsx) file.",
+      });
+    }
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it("accepts Excel row trim metadata and ingests workbook cell text", async () => {
+    const trim = { unit: "rows" as const, included: 2, total: 8 };
+    const insertedDoc = chainable({
+      data: {
+        id: "excel-1",
+        name: "data.xlsx",
+        status: "processing",
+        created_at: "2026-10-02",
+        trimmed_unit: trim.unit,
+        included_count: trim.included,
+        source_count: trim.total,
+      },
+      error: null,
+    });
+    const chunksInsert = chainable({ data: null, error: null });
+    const updatedDoc = chainable({
+      data: {
+        id: "excel-1",
+        name: "data.xlsx",
+        status: "ready",
+        created_at: "2026-10-02",
+        trimmed_unit: trim.unit,
+        included_count: trim.included,
+        source_count: trim.total,
+      },
+      error: null,
+    });
+    mockFrom
+      .mockImplementationOnce(() => insertedDoc as never)
+      .mockImplementationOnce(() => chunksInsert as never)
+      .mockImplementationOnce(() => updatedDoc as never);
+
+    const res = await POST(
+      await excelUploadRequest(
+        [
+          ["Name", "Score"],
+          ["Ada", 98],
+        ],
+        trim,
+      ),
+    );
+
+    expect(res.status).toBe(200);
+    expect(insertedDoc.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ trimmed_unit: "rows", included_count: 2, source_count: 8 }),
+    );
+    expect(mockEmbedMany).toHaveBeenCalledWith([expect.stringContaining('A2 / "Name"="Ada"')]);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({ trimmed: { unit: "rows", included: 2, total: 8 } }),
+    );
+  });
+
+  it("rejects malformed or empty Excel workbooks without creating a document row", async () => {
+    const malformed = new FormData();
+    malformed.append(
+      "file",
+      new File(["not an xlsx archive"], "broken.xlsx", {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    );
+
+    const malformedRes = await POST(
+      new NextRequest("http://localhost/api/documents", { method: "POST", body: malformed }),
+    );
+    expect(malformedRes.status).toBe(400);
+    expect((await malformedRes.json()).error).toMatch(/^Could not read Excel workbook:/);
+    expect(mockFrom).not.toHaveBeenCalled();
+
+    const emptyRes = await POST(await excelUploadRequest([]));
+    expect(emptyRes.status).toBe(400);
+    await expect(emptyRes.json()).resolves.toEqual({
+      error: "Could not read Excel workbook: No extractable cell values found in the workbook",
+    });
     expect(mockFrom).not.toHaveBeenCalled();
   });
 

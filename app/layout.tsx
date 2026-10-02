@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 export const metadata: Metadata = {
   title: "NotesRAG — Chat with your documents",
   description:
-    "NotesRAG is a personal RAG chatbot that answers questions using your own uploaded PDF and Markdown documents, with cited sources.",
+    "NotesRAG is a personal RAG chatbot that answers questions using your own uploaded PDF, Markdown, and Excel documents, with cited sources.",
   icons: { icon: "/favicon.ico" },
   openGraph: {
     title: "NotesRAG — Chat with your documents",
