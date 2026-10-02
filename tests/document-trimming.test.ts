@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import ExcelJS from "exceljs";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { prepareDocumentUpload } from "@/lib/document-trimming";
 
@@ -60,5 +61,35 @@ describe("document upload preparation", () => {
     expect(result.file.size).toBeLessThan(30);
     expect(await result.file.text()).toBe("first line\nsecond line\n");
     expect(result.trimmed).toEqual({ unit: "lines", included: 2, total: 4 });
+  });
+
+  it("keeps complete populated Excel rows from the beginning", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Rows");
+    sheet.addRow(["Key", "Value"]);
+    for (let index = 1; index <= 250; index += 1) {
+      sheet.addRow([
+        `row-${index}`,
+        Array.from({ length: 20 }, (_, part) => `${index}-${part}-${index * 104729 + part}`).join(
+          " ",
+        ),
+      ]);
+    }
+    const source = new Uint8Array(await workbook.xlsx.writeBuffer());
+    const file = new File([source], "large.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    const result = await prepareDocumentUpload(file, 10_000);
+
+    expect(result.file.name).toBe("large.xlsx");
+    expect(result.file.type).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    expect(result.file.size).toBeLessThan(10_000);
+    expect(result.trimmed?.unit).toBe("rows");
+    expect(result.trimmed?.included).toBeGreaterThan(0);
+    expect(result.trimmed?.included).toBeLessThan(result.trimmed?.total ?? 0);
+    expect(result.wasOptimized).toBe(false);
   });
 });

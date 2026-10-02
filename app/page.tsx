@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DocumentSidebar } from "@/components/notes-rag/document-sidebar";
 import { ChatPanel } from "@/components/notes-rag/chat-panel";
+import { WhatsNewDialog } from "@/components/notes-rag/whats-new-dialog";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
   ApiError,
@@ -67,12 +68,15 @@ export default function Index() {
           const prepared = await prepareDocumentUpload(file);
           if (prepared.trimmed) {
             const { unit, included, total } = prepared.trimmed;
+            const singularUnit = unit === "pages" ? "page" : unit === "lines" ? "line" : "row";
             toast.warning(FILE_SIZE_TOO_LARGE_MESSAGE, {
-              description: `Trimmed to ${unit} 1–${included} of ${total}. The chatbot has context through ${unit === "pages" ? "page" : "line"} ${included}.`,
+              description: `Trimmed to ${unit} 1–${included} of ${total}. The chatbot has context through ${singularUnit} ${included}.`,
             });
           } else if (prepared.wasOptimized) {
             toast.warning(FILE_SIZE_TOO_LARGE_MESSAGE, {
-              description: "The PDF was optimized to fit; all pages are available to the chatbot.",
+              description: file.name.toLowerCase().endsWith(".xlsx")
+                ? "The Excel workbook was optimized to fit; all populated rows are available to the chatbot."
+                : "The PDF was optimized to fit; all pages are available to the chatbot.",
             });
           }
 
@@ -176,6 +180,7 @@ export default function Index() {
         </Button>
         <h1 className="text-sm font-semibold tracking-tight">NotesRAG</h1>
         <div className="flex-1" />
+        <WhatsNewDialog />
         <Button variant="outline" size="sm" onClick={handleNewChat}>
           <RotateCcw className="size-3.5" />
           New chat

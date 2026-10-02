@@ -16,4 +16,10 @@ describe("document upload limits", () => {
       "Trimmed: pages 1–12 of 30",
     );
   });
+
+  it("formats the persistent Excel row context label", () => {
+    expect(formatTrimmedRange({ unit: "rows", included: 40, total: 125 })).toBe(
+      "Trimmed: rows 1–40 of 125",
+    );
+  });
 });

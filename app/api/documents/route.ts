@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from "@/lib/supabase-server";
 import { chunkText, countTokens, splitToTokenLimit, MAX_EMBED_TOKENS } from "@/lib/chunking";
 import { embedMany } from "@/lib/openrouter";
 import { extractPdfText } from "@/lib/pdf-text";
+import { extractSpreadsheetText, isExcelFile } from "@/lib/spreadsheet";
 import {
   FILE_SIZE_TOO_LARGE_MESSAGE,
   isUploadTooLarge,
@@ -15,6 +16,10 @@ import {
 export const runtime = "nodejs";
 
 const CHUNK_INSERT_BATCH_SIZE = 50;
+const UNSUPPORTED_FILE_MESSAGE =
+  "Unsupported file type. Upload a PDF, Markdown, or Excel (.xlsx) file.";
+
+type DocumentKind = "pdf" | "markdown" | "excel";
 
 // Phase 7: both handlers below require an authenticated session and
 // scope every query/insert to that user's id explicitly.
@@ -53,7 +58,7 @@ function parseTrimmedRange(form: FormData): TrimmedRange | null | "invalid" {
 
   if (unit === null && includedRaw === null && totalRaw === null) return null;
   if (
-    (unit !== "pages" && unit !== "lines") ||
+    (unit !== "pages" && unit !== "lines" && unit !== "rows") ||
     typeof includedRaw !== "string" ||
     typeof totalRaw !== "string"
   ) {
@@ -79,12 +84,27 @@ function isPdf(file: File): boolean {
   return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 }
 
-async function extractRawText(file: File): Promise<string> {
-  if (isPdf(file)) {
+function isMarkdown(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return name.endsWith(".md") || name.endsWith(".markdown") || file.type === "text/markdown";
+}
+
+function getDocumentKind(file: File): DocumentKind | null {
+  if (isPdf(file)) return "pdf";
+  if (isExcelFile(file)) return "excel";
+  if (isMarkdown(file)) return "markdown";
+  return null;
+}
+
+async function extractRawText(file: File, kind: DocumentKind): Promise<string> {
+  if (kind === "pdf") {
     const buf = new Uint8Array(await file.arrayBuffer());
     return extractPdfText(buf);
   }
-  // Markdown / plain text: read as UTF-8.
+  if (kind === "excel") {
+    return extractSpreadsheetText(new Uint8Array(await file.arrayBuffer()));
+  }
+  // Markdown: read as UTF-8.
   return file.text();
 }
 
@@ -110,16 +130,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: FILE_SIZE_TOO_LARGE_MESSAGE }, { status: 413 });
   }
 
+  const kind = getDocumentKind(file);
+  if (!kind) {
+    return NextResponse.json({ error: UNSUPPORTED_FILE_MESSAGE }, { status: 415 });
+  }
+
   const trimmed = parseTrimmedRange(form);
   if (
     trimmed === "invalid" ||
     (trimmed !== null &&
-      ((isPdf(file) && trimmed.unit !== "pages") || (!isPdf(file) && trimmed.unit !== "lines")))
+      ((kind === "pdf" && trimmed.unit !== "pages") ||
+        (kind === "markdown" && trimmed.unit !== "lines") ||
+        (kind === "excel" && trimmed.unit !== "rows")))
   ) {
     return NextResponse.json({ error: "Invalid trim metadata" }, { status: 400 });
   }
 
   const name = file.name || "untitled";
+
+  // Validate and extract Excel before creating a database row. An encrypted,
+  // malformed, or empty workbook should be rejected as an upload error rather
+  // than leaving a permanent failed document behind.
+  let spreadsheetText: string | null = null;
+  if (kind === "excel") {
+    try {
+      spreadsheetText = await extractRawText(file, kind);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return NextResponse.json(
+        { error: `Could not read Excel workbook: ${detail}` },
+        { status: 400 },
+      );
+    }
+  }
 
   // 1. Create the document row up front so the UI can show "processing".
   const { data: created, error: insertError } = await supabaseAdmin
@@ -147,7 +190,7 @@ export async function POST(req: NextRequest) {
   // 2. Extract -> chunk -> embed -> store. On any failure, mark "failed".
   let ingestionStage = "extracting text";
   try {
-    const text = await extractRawText(file);
+    const text = spreadsheetText ?? (await extractRawText(file, kind));
     ingestionStage = "chunking text";
     const baseChunks = chunkText(text);
 
