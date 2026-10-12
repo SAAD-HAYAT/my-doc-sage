@@ -13,7 +13,7 @@ export const FEATURE_ANNOUNCEMENTS: FeatureAnnouncement[] = [
     items: [
       "Upload modern .xlsx workbooks and ask questions about their cell data.",
       "Request summaries across multiple worksheets, including hidden sheets.",
-      "Workbooks over 4 MB are optimized or trimmed by complete populated rows.",
+      "Large or row-dense workbooks are safely trimmed by complete populated rows.",
     ],
   },
 ];

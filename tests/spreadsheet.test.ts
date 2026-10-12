@@ -90,4 +90,39 @@ describe("Excel workbook extraction", () => {
     expect(trimmed.includedRows).toBeLessThan(trimmed.totalRows);
     expect(retainedRows.at(-1)?.rowNumber).toBe(trimmed.includedRows);
   });
+
+  it("trims a compressed workbook by semantic row limits even when bytes fit", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Dense");
+    sheet.addRow(["Code", "Description"]);
+    for (let index = 1; index <= 12; index += 1) {
+      sheet.addRow([`code-${index}`, `description-${index}`]);
+    }
+    const source = new Uint8Array(await workbook.xlsx.writeBuffer());
+
+    const trimmed = await trimSpreadsheetToSize(source, Number.MAX_SAFE_INTEGER, {
+      maxRows: 5,
+      maxTextCharacters: Number.MAX_SAFE_INTEGER,
+    });
+    const retainedRows = await readSpreadsheetRows(trimmed.bytes);
+
+    expect(trimmed.includedRows).toBe(5);
+    expect(trimmed.totalRows).toBe(13);
+    expect(retainedRows).toHaveLength(5);
+    expect(retainedRows.at(-1)?.rowNumber).toBe(5);
+  });
+
+  it("rejects untrimmed workbooks over the semantic ingestion limit", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Dense");
+    sheet.addRows([["Header"], ["one"], ["two"]]);
+    const source = new Uint8Array(await workbook.xlsx.writeBuffer());
+
+    await expect(
+      extractSpreadsheetText(source, {
+        maxRows: 2,
+        maxTextCharacters: Number.MAX_SAFE_INTEGER,
+      }),
+    ).rejects.toThrow("Workbook exceeds the safe ingestion limit");
+  });
 });

@@ -20,8 +20,10 @@ backend or database workflow.
   are not indexed.
 - Formula text and its last saved cached result are indexed. Formulas are not
   recalculated during ingestion.
-- Oversized workbooks are rebuilt without formatting/media and keep the largest
-  complete populated-row prefix below 4 MiB.
+- Oversized or unusually row-dense workbooks are rebuilt without
+  formatting/media and keep the largest complete populated-row prefix below 4
+  MiB, 10,000 populated rows, and 500,000 extracted characters. These semantic
+  limits also apply when XLSX compression keeps the source file below 4 MiB.
 - What's new announcements are code-defined and remembered in local storage by
   authenticated user id. No database migration is needed.
 
@@ -38,8 +40,8 @@ backend or database workflow.
 
 - A valid multi-sheet `.xlsx` becomes ready and its cell values are available
   to retrieval with worksheet and header context.
-- An oversized workbook uploads either all optimized rows or the largest row
-  prefix below 4 MiB and displays `Trimmed: rows 1–N of M` when truncated.
+- An oversized or row-dense workbook uploads either all optimized rows or the
+  largest safe row prefix and displays `Trimmed: rows 1–N of M` when truncated.
 - Invalid, encrypted, empty, and unsupported workbooks do not create document
   rows and return a clear upload error.
 - The latest announcement opens once per signed-in user in a browser, shows an

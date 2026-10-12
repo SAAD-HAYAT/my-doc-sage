@@ -92,4 +92,22 @@ describe("document upload preparation", () => {
     expect(result.trimmed?.included).toBeLessThan(result.trimmed?.total ?? 0);
     expect(result.wasOptimized).toBe(false);
   });
+
+  it("inspects a below-limit Excel file while preserving ordinary workbooks", async () => {
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet("Small").addRows([
+      ["Key", "Value"],
+      ["A", 1],
+    ]);
+    const source = new Uint8Array(await workbook.xlsx.writeBuffer());
+    const file = new File([source], "small.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    const result = await prepareDocumentUpload(file);
+
+    expect(result.file).toBe(file);
+    expect(result.trimmed).toBeNull();
+    expect(result.wasOptimized).toBe(false);
+  });
 });
