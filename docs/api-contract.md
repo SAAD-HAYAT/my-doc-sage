@@ -71,7 +71,9 @@ their embedded text layer when available and OCR for scanned/image-only pages.
 The browser trims an oversized PDF to the largest complete page prefix below
 that limit, an oversized Markdown file to complete leading lines, or an
 oversized Excel workbook to complete populated rows in worksheet order before
-uploading it. Excel formatting and media are removed during optimization; cell
+uploading it. Excel uploads are also capped at 10,000 populated rows and
+500,000 extracted characters, even when XLSX compression keeps the source
+below 4 MiB. Excel formatting and media are removed during optimization; cell
 values, sheet names, row numbers, formulas, and cached formula results are
 indexed. A trimmed upload also sends `trimmedUnit`, `includedCount`, and
 `sourceCount` multipart fields; inconsistent metadata returns

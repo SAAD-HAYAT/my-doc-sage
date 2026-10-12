@@ -21,31 +21,33 @@ if (!absolutePath.toLowerCase().endsWith(".xlsx")) {
 }
 
 const source = Uint8Array.from(await readFile(absolutePath));
-const rows = await readSpreadsheetRows(source);
-if (rows.length === 0) throw new Error("Workbook had no extractable rows");
+const uploadFile = new File([source], basename(absolutePath), { type: EXCEL_MIME_TYPE });
+const productionUpload = await prepareDocumentUpload(uploadFile);
+const preparedBytes = new Uint8Array(await productionUpload.file.arrayBuffer());
+const rows = await readSpreadsheetRows(preparedBytes);
+if (rows.length === 0) throw new Error("Prepared workbook had no extractable rows");
+if (productionUpload.trimmed && rows.length !== productionUpload.trimmed.included) {
+  throw new Error("Prepared row count did not match production trim metadata");
+}
 
-const text = await extractSpreadsheetText(source);
+const text = await extractSpreadsheetText(preparedBytes);
 const chunks = chunkText(text).flatMap((chunk) => splitToTokenLimit(chunk));
 const maxChunkTokens = Math.max(...chunks.map((chunk) => countTokens(chunk)));
 if (maxChunkTokens > MAX_EMBED_TOKENS) {
   throw new Error(`A chunk exceeded the embedding limit: ${maxChunkTokens} tokens`);
 }
 
-const uploadFile = new File([source], basename(absolutePath), { type: EXCEL_MIME_TYPE });
-const productionUpload = await prepareDocumentUpload(uploadFile);
 if (isUploadTooLarge(source.byteLength)) {
   if (productionUpload.file.size >= MAX_UPLOAD_SIZE_BYTES) {
     throw new Error("Production upload preparation did not reduce the workbook below 4 MB");
   }
-} else if (productionUpload.file !== uploadFile || productionUpload.trimmed !== null) {
+} else if (!productionUpload.trimmed && productionUpload.file !== uploadFile) {
   throw new Error("A workbook below 4 MB was modified unexpectedly");
 }
 
 // Exercise the oversized-workbook path even when the supplied fixture is
 // naturally below 4 MB. The reduced cap is derived from the normalized output
 // so this remains deterministic across workbooks and ExcelJS releases.
-const normalized = await trimSpreadsheetToSize(source, Number.MAX_SAFE_INTEGER);
-const forcedLimit = Math.max(8_000, Math.floor(normalized.bytes.byteLength * 0.65));
 let forcedTrim: {
   limitBytes: number;
   outputBytes: number;
@@ -53,7 +55,12 @@ let forcedTrim: {
   prefixVerified: true;
 } | null = null;
 
-if (forcedLimit < normalized.bytes.byteLength) {
+if (!productionUpload.trimmed) {
+  const normalized = await trimSpreadsheetToSize(source, Number.MAX_SAFE_INTEGER);
+  const forcedLimit = Math.max(8_000, Math.floor(normalized.bytes.byteLength * 0.65));
+  if (forcedLimit >= normalized.bytes.byteLength) {
+    throw new Error("Workbook was too small to exercise forced row trimming");
+  }
   const trimmed = await trimSpreadsheetToSize(source, forcedLimit);
   const retainedRows = await readSpreadsheetRows(trimmed.bytes);
   if (trimmed.bytes.byteLength >= forcedLimit) {
@@ -97,8 +104,10 @@ console.log(
     {
       file: basename(absolutePath),
       sourceBytes: source.byteLength,
+      preparedBytes: productionUpload.file.size,
       sheets,
-      populatedRows: rows.length,
+      populatedRows: productionUpload.trimmed?.total ?? rows.length,
+      retainedRows: rows.length,
       extractedCharacters: text.length,
       chunks: chunks.length,
       maxChunkTokens,

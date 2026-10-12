@@ -1,6 +1,18 @@
 import type { CellValue, Workbook, WorksheetState } from "exceljs";
 
 export const EXCEL_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+export const MAX_SPREADSHEET_ROWS = 10_000;
+export const MAX_SPREADSHEET_TEXT_CHARACTERS = 500_000;
+
+export interface SpreadsheetLimits {
+  maxRows: number;
+  maxTextCharacters: number;
+}
+
+const DEFAULT_SPREADSHEET_LIMITS: SpreadsheetLimits = {
+  maxRows: MAX_SPREADSHEET_ROWS,
+  maxTextCharacters: MAX_SPREADSHEET_TEXT_CHARACTERS,
+};
 
 export interface SpreadsheetCell {
   column: number;
@@ -109,7 +121,10 @@ function collectRowsFromWorkbook(workbook: Workbook): SpreadsheetRow[] {
     });
 
     const headers = sheetRows[0]?.cells ?? [];
-    rows.push(...sheetRows.map((row) => ({ ...row, headers })));
+    // Do not spread a whole worksheet into push(). Dense workbooks can have
+    // more rows than V8 permits as function arguments (roughly 100k), which
+    // previously caused "Maximum call stack size exceeded" before trimming.
+    for (const row of sheetRows) rows.push({ ...row, headers });
   }
 
   return rows;
@@ -152,9 +167,39 @@ function formatSpreadsheetRow(row: SpreadsheetRow): string {
     .join(" | ");
 }
 
-export async function extractSpreadsheetText(bytes: ArrayBuffer | Uint8Array): Promise<string> {
+function semanticPrefixLength(
+  rows: SpreadsheetRow[],
+  limits: SpreadsheetLimits = DEFAULT_SPREADSHEET_LIMITS,
+): number {
+  let characters = 0;
+  let included = 0;
+
+  for (const row of rows) {
+    if (included >= limits.maxRows) break;
+    const rowCharacters = formatSpreadsheetRow(row).length + (included === 0 ? 0 : 2);
+    if (characters + rowCharacters > limits.maxTextCharacters) break;
+    characters += rowCharacters;
+    included += 1;
+  }
+
+  if (included === 0) {
+    throw new Error("The first populated Excel row exceeds the safe processing limit");
+  }
+  return included;
+}
+
+export async function extractSpreadsheetText(
+  bytes: ArrayBuffer | Uint8Array,
+  limits: SpreadsheetLimits = DEFAULT_SPREADSHEET_LIMITS,
+): Promise<string> {
   const rows = await readSpreadsheetRows(bytes);
   if (rows.length === 0) throw new Error("No extractable cell values found in the workbook");
+  const includedRows = semanticPrefixLength(rows, limits);
+  if (includedRows < rows.length) {
+    throw new Error(
+      `Workbook exceeds the safe ingestion limit (${limits.maxRows.toLocaleString("en-US")} rows or ${limits.maxTextCharacters.toLocaleString("en-US")} extracted characters). Upload it through the app so it can be trimmed safely.`,
+    );
+  }
   return rows.map(formatSpreadsheetRow).join("\n\n");
 }
 
@@ -185,18 +230,20 @@ export interface TrimmedSpreadsheet {
 export async function trimSpreadsheetToSize(
   bytes: ArrayBuffer | Uint8Array,
   maxBytes: number,
+  limits: SpreadsheetLimits = DEFAULT_SPREADSHEET_LIMITS,
 ): Promise<TrimmedSpreadsheet> {
   const rows = await readSpreadsheetRows(bytes);
   const totalRows = rows.length;
   if (totalRows === 0) throw new Error("No extractable cell values found in the workbook");
 
-  const allRows = await serializeRowPrefix(rows, totalRows);
+  const semanticRows = semanticPrefixLength(rows, limits);
+  const allRows = await serializeRowPrefix(rows, semanticRows);
   if (allRows.byteLength < maxBytes) {
-    return { bytes: allRows, includedRows: totalRows, totalRows };
+    return { bytes: allRows, includedRows: semanticRows, totalRows };
   }
 
   let low = 1;
-  let high = totalRows - 1;
+  let high = semanticRows - 1;
   let includedRows = 0;
   let best: Uint8Array | null = null;
 

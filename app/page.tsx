@@ -69,7 +69,11 @@ export default function Index() {
           if (prepared.trimmed) {
             const { unit, included, total } = prepared.trimmed;
             const singularUnit = unit === "pages" ? "page" : unit === "lines" ? "line" : "row";
-            toast.warning(FILE_SIZE_TOO_LARGE_MESSAGE, {
+            const trimMessage =
+              unit === "rows" && !wasOversized
+                ? "Workbook trimmed for safe processing"
+                : FILE_SIZE_TOO_LARGE_MESSAGE;
+            toast.warning(trimMessage, {
               description: `Trimmed to ${unit} 1–${included} of ${total}. The chatbot has context through ${singularUnit} ${included}.`,
             });
           } else if (prepared.wasOptimized) {

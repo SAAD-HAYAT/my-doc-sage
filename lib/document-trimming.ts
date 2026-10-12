@@ -113,16 +113,21 @@ async function trimMarkdown(file: File, maxBytes: number): Promise<PreparedDocum
 
 async function trimSpreadsheet(file: File, maxBytes: number): Promise<PreparedDocumentUpload> {
   const result = await trimSpreadsheetToSize(await file.arrayBuffer(), maxBytes);
-  const wasOptimized = result.includedRows === result.totalRows;
+  const wasTrimmed = result.includedRows < result.totalRows;
+  if (!wasTrimmed && file.size < maxBytes) {
+    return { file, trimmed: null, wasOptimized: false };
+  }
+
+  const wasOptimized = !wasTrimmed;
   const bytes = Uint8Array.from(result.bytes);
   return {
     file: new File([bytes], file.name, {
       type: EXCEL_MIME_TYPE,
       lastModified: file.lastModified,
     }),
-    trimmed: wasOptimized
-      ? null
-      : { unit: "rows", included: result.includedRows, total: result.totalRows },
+    trimmed: wasTrimmed
+      ? { unit: "rows", included: result.includedRows, total: result.totalRows }
+      : null,
     wasOptimized,
   };
 }
@@ -131,11 +136,14 @@ export async function prepareDocumentUpload(
   file: File,
   maxBytes = MAX_UPLOAD_SIZE_BYTES,
 ): Promise<PreparedDocumentUpload> {
+  // XLSX compression can hide hundreds of thousands of rows inside a file
+  // smaller than 4 MiB, so Excel needs semantic inspection at every size.
+  if (isExcelFile(file)) return trimSpreadsheet(file, maxBytes);
+
   if (!isUploadTooLarge(file.size) && file.size < maxBytes) {
     return { file, trimmed: null, wasOptimized: false };
   }
 
   if (isPdf(file)) return trimPdf(file, maxBytes);
-  if (isExcelFile(file)) return trimSpreadsheet(file, maxBytes);
   return trimMarkdown(file, maxBytes);
 }
