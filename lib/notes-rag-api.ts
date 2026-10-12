@@ -4,6 +4,12 @@
  */
 
 import type { TrimmedRange } from "@/lib/document-upload";
+import type { DepartmentAssignment, WorkbookCategory } from "@/lib/workbook-categorization";
+import type {
+  DownloadableFile,
+  GeneratedFileFormat,
+  GeneratedFilePayload,
+} from "@/lib/generated-files";
 
 export type DocumentStatus = "processing" | "ready" | "failed";
 
@@ -26,6 +32,7 @@ export interface ChatMessage {
   content: string;
   sources?: ChatSource[];
   createdAt: string;
+  generatedFile?: DownloadableFile;
 }
 
 export class ApiError extends Error {
@@ -94,4 +101,22 @@ export const chatApi = {
 
   history: (sessionId: string) =>
     apiFetch<ChatMessage[]>(`/api/chat/${encodeURIComponent(sessionId)}`),
+};
+
+export const spreadsheetApi = {
+  classifyDepartments: (departments: string[], categories: WorkbookCategory[]) =>
+    apiFetch<{ assignments: DepartmentAssignment[] }>("/api/spreadsheets/classify-departments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ departments, categories }),
+    }),
+};
+
+export const filesApi = {
+  generate: (prompt: string, specification: string, format: GeneratedFileFormat) =>
+    apiFetch<GeneratedFilePayload>("/api/files/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, specification, format }),
+    }),
 };

@@ -1,11 +1,10 @@
 "use client";
 
-import { BookOpen, ChevronDown, FileUp } from "lucide-react";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { useState } from "react";
+import { BookOpen, ChevronDown, Download, FileUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Conversation,
   ConversationContent,
@@ -21,6 +20,7 @@ import {
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { cn } from "@/lib/utils";
 import type { ChatMessage, ChatSource } from "@/lib/notes-rag-api";
+import type { FileClarification } from "@/lib/generated-files";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -28,6 +28,8 @@ interface ChatPanelProps {
   hasDocuments: boolean;
   onSend: (text: string) => void;
   onOpenSidebar: () => void;
+  clarification: FileClarification | null;
+  onClarification: (answer: string) => void;
 }
 
 function SourcesList({ sources }: { sources: ChatSource[] }) {
@@ -42,19 +44,14 @@ function SourcesList({ sources }: { sources: ChatSource[] }) {
       <CollapsibleContent>
         <ul className="mt-2 space-y-2">
           {sources.map((s, i) => (
-            <li
-              key={i}
-              className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs"
-            >
+            <li key={i} className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-medium">{s.documentName}</span>
                 <span className="shrink-0 text-muted-foreground">
                   {Math.round(s.score * 100)}% match
                 </span>
               </div>
-              <p className="mt-1 line-clamp-3 text-muted-foreground">
-                {s.chunkText}
-              </p>
+              <p className="mt-1 line-clamp-3 text-muted-foreground">{s.chunkText}</p>
             </li>
           ))}
         </ul>
@@ -71,8 +68,8 @@ function EmptyState({ onOpenSidebar }: { onOpenSidebar: () => void }) {
       </div>
       <h2 className="text-lg font-semibold">Upload your first document</h2>
       <p className="max-w-sm text-sm text-muted-foreground">
-        NotesRAG answers questions using your own documents. Upload a PDF,
-        Markdown, or Excel file in the sidebar, then ask anything.
+        NotesRAG answers questions using your own documents. Upload a PDF, Markdown, or Excel file
+        in the sidebar, then ask anything.
       </p>
       <button
         type="button"
@@ -85,12 +82,58 @@ function EmptyState({ onOpenSidebar }: { onOpenSidebar: () => void }) {
   );
 }
 
+function ClarificationComposer({
+  clarification,
+  disabled,
+  onAnswer,
+}: {
+  clarification: FileClarification;
+  disabled: boolean;
+  onAnswer: (answer: string) => void;
+}) {
+  const [custom, setCustom] = useState("");
+  return (
+    <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">
+      <p className="text-sm font-medium">{clarification.question}</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {clarification.options.map((option) => (
+          <Button
+            key={option}
+            variant="outline"
+            className="h-auto justify-start whitespace-normal py-2 text-left"
+            disabled={disabled}
+            onClick={() => onAnswer(option)}
+          >
+            {option}
+          </Button>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Input
+          value={custom}
+          disabled={disabled}
+          placeholder="Custom option…"
+          onChange={(event) => setCustom(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && custom.trim()) onAnswer(custom.trim());
+          }}
+        />
+        <Button disabled={disabled || !custom.trim()} onClick={() => onAnswer(custom.trim())}>
+          Use custom
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function ChatPanel({
   messages,
   sending,
   hasDocuments,
   onSend,
   onOpenSidebar,
+  clarification,
+  onClarification,
 }: ChatPanelProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -116,6 +159,14 @@ export function ChatPanel({
                     <>
                       <MessageResponse>{msg.content}</MessageResponse>
                       {msg.sources && <SourcesList sources={msg.sources} />}
+                      {msg.generatedFile && (
+                        <Button asChild variant="outline" size="sm" className="mt-3">
+                          <a href={msg.generatedFile.url} download={msg.generatedFile.name}>
+                            <Download className="size-3.5" />
+                            Download {msg.generatedFile.name}
+                          </a>
+                        </Button>
+                      )}
                     </>
                   ) : (
                     msg.content
@@ -138,27 +189,34 @@ export function ChatPanel({
       {/* Composer */}
       <div className="border-t border-border bg-background px-4 py-3">
         <div className="mx-auto w-full max-w-3xl">
-          <PromptInput
-            onSubmit={(message) => {
-              const text = message.text.trim();
-              if (text && !sending) onSend(text);
-            }}
-          >
-            <PromptInputTextarea
-              placeholder={
-                hasDocuments
-                  ? "Ask about your documents…"
-                  : "Upload a document first…"
-              }
-              disabled={!hasDocuments || sending}
+          {clarification ? (
+            <ClarificationComposer
+              key={`${clarification.prompt}:${clarification.question}`}
+              clarification={clarification}
+              disabled={sending}
+              onAnswer={onClarification}
             />
-            <PromptInputFooter className="justify-end">
-              <PromptInputSubmit
-                {...(sending ? { status: "submitted" as const } : {})}
+          ) : (
+            <PromptInput
+              onSubmit={(message) => {
+                const text = message.text.trim();
+                if (text && !sending) onSend(text);
+              }}
+            >
+              <PromptInputTextarea
+                placeholder={
+                  hasDocuments ? "Ask about your documents…" : "Upload a document first…"
+                }
                 disabled={!hasDocuments || sending}
               />
-            </PromptInputFooter>
-          </PromptInput>
+              <PromptInputFooter className="justify-end">
+                <PromptInputSubmit
+                  {...(sending ? { status: "submitted" as const } : {})}
+                  disabled={!hasDocuments || sending}
+                />
+              </PromptInputFooter>
+            </PromptInput>
+          )}
         </div>
       </div>
     </div>
