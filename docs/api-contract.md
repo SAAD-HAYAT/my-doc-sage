@@ -109,6 +109,41 @@ Body: `{ message: string, sessionId: string }`
 Response: `{ answer: string, sources: { documentName: string, chunkText: string, score: number }[] }`
 Requires auth: `401 { error: string }` with no valid session.
 
+### `POST /api/spreadsheets/classify-departments`
+
+Body:
+`{ departments: string[], categories: { id: string, name: string, description: string }[] }`
+
+Exactly four categories are required. The endpoint sends only these department
+names and category definitions to the language model; it does not receive or
+store the source workbook.
+
+Response:
+`{ assignments: { department: string, categoryId: string }[] }`
+
+Every input department must appear exactly once with one of the submitted
+category IDs. Invalid input returns HTTP 400; incomplete or malformed model
+output returns HTTP 502. Requires auth: `401 { error: string }` with no valid
+session.
+
+### `POST /api/files/generate`
+
+Body:
+`{ prompt: string, specification: string, format: "xlsx" | "pdf" | "md" }`
+
+The endpoint retrieves relevant passages belonging to the authenticated user
+and returns a validated file payload. Excel responses contain worksheet names
+and cell rows; PDF and Markdown responses contain Markdown document content.
+The browser converts that payload into the final downloadable file.
+
+Response:
+`{ format: "xlsx", name: string, sheets: { name: string, rows: (string | number | boolean | null)[][] }[] }`
+or
+`{ format: "pdf" | "md", name: string, content: string }`
+
+Invalid requests return HTTP 400 and model-generation failures return HTTP 502.
+Requires auth: `401 { error: string }` with no valid session.
+
 ### `GET /api/chat/:sessionId`
 
 Response: array of `{ role: "user" | "assistant", content: string, sources?: [...], createdAt: string }`
