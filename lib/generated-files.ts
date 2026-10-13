@@ -24,44 +24,45 @@ export interface FileClarification {
   mode: "generate" | "categorize-workbook";
   question: string;
   options: [string, string];
+  customPlaceholder: string;
+  answers: string[];
 }
 
-export function fileClarificationFor(message: string): FileClarification | null {
-  const format = requestedFileFormat(message);
-  if (!format) return null;
-  if (isCategorizationRequest(message)) {
-    return {
-      prompt: message,
-      format,
-      mode: "categorize-workbook",
-      question: "How should the workbook be divided into four worksheets?",
-      options: [
-        "Production, Maintenance, Administration, and Logistics",
-        "Use the four values already present in a Category column",
-      ],
-    };
-  }
-  if (format === "xlsx") {
-    if (/\b(?:one|single)\s+(?:summary\s+)?worksheet\b|\bseparate\s+worksheets?\b/i.test(message)) {
-      return null;
-    }
-    return {
-      prompt: message,
-      format,
-      mode: "generate",
-      question: "How should the Excel workbook be organized?",
-      options: ["One concise summary worksheet", "Separate worksheets by topic"],
-    };
-  }
-  if (/\b(?:concise|brief|detailed|comprehensive)\b/i.test(message)) return null;
-  return {
-    prompt: message,
-    format,
-    mode: "generate",
-    question: `What level of detail should the ${format === "pdf" ? "PDF" : "Markdown"} document use?`,
-    options: ["Concise summary with headings", "Detailed report with supporting sections"],
-  };
+export interface DefinedWorkbookCategorization {
+  strategy: "model-classification";
+  categories: {
+    id: string;
+    name: string;
+    description: string;
+  }[];
 }
+
+export interface ExistingColumnCategorization {
+  strategy: "existing-category-column";
+}
+
+export type FileRequestPlan =
+  | {
+      action: "clarify";
+      format: GeneratedFileFormat;
+      mode: "generate" | "categorize-workbook";
+      question: string;
+      options: [string, string];
+      customPlaceholder: string;
+    }
+  | {
+      action: "generate";
+      format: GeneratedFileFormat;
+      mode: "generate";
+      specification: string;
+    }
+  | {
+      action: "generate";
+      format: "xlsx";
+      mode: "categorize-workbook";
+      specification: string;
+      categorization: DefinedWorkbookCategorization | ExistingColumnCategorization;
+    };
 
 async function createWorkbook(): Promise<Workbook> {
   const excelJs = await import("exceljs");
@@ -225,13 +226,4 @@ export function requestedFileFormat(message: string): GeneratedFileFormat | null
   if (/\bpdf\b/i.test(message)) return "pdf";
   if (/\b(?:markdown|md)\b/i.test(message)) return "md";
   return null;
-}
-
-export function isCategorizationRequest(message: string): boolean {
-  return (
-    requestedFileFormat(message) === "xlsx" &&
-    (/\b(?:categor(?:ize|ise|ized|ised|ization)|sort|group)\b/i.test(message) ||
-      (/\b(?:separate|split)\b/i.test(message) &&
-        /\b(?:department|category|categories)\b/i.test(message)))
-  );
 }

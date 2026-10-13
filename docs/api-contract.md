@@ -144,6 +144,30 @@ or
 Invalid requests return HTTP 400 and model-generation failures return HTTP 502.
 Requires auth: `401 { error: string }` with no valid session.
 
+### `POST /api/files/plan`
+
+Body:
+`{ prompt: string, format: "xlsx" | "pdf" | "md", answers: string[] }`
+
+The endpoint asks the language model whether a material choice is missing from
+the file request. It does not force a clarification when the model can infer a
+useful specification. Questions, both suggested answers, and the custom-input
+placeholder are model-authored and validated before being returned.
+
+Clarification response:
+`{ action: "clarify", format, mode: "generate" | "categorize-workbook", question: string, options: [string, string], customPlaceholder: string }`
+
+Ready general-file response:
+`{ action: "generate", format, mode: "generate", specification: string }`
+
+Ready workbook-categorization responses additionally contain a structured
+`categorization` strategy: either four validated model-defined categories or
+`{ strategy: "existing-category-column" }`. The browser uses this structured
+strategy rather than assigning hidden meanings to option positions.
+
+Invalid requests return HTTP 400 and invalid/model planning failures return
+HTTP 502. Requires auth: `401 { error: string }` with no valid session.
+
 ### `GET /api/chat/:sessionId`
 
 Response: array of `{ role: "user" | "assistant", content: string, sources?: [...], createdAt: string }`

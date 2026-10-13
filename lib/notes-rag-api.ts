@@ -7,6 +7,7 @@ import type { TrimmedRange } from "@/lib/document-upload";
 import type { DepartmentAssignment, WorkbookCategory } from "@/lib/workbook-categorization";
 import type {
   DownloadableFile,
+  FileRequestPlan,
   GeneratedFileFormat,
   GeneratedFilePayload,
 } from "@/lib/generated-files";
@@ -113,6 +114,13 @@ export const spreadsheetApi = {
 };
 
 export const filesApi = {
+  plan: (prompt: string, format: GeneratedFileFormat, answers: string[] = []) =>
+    apiFetch<FileRequestPlan>("/api/files/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, format, answers }),
+    }),
+
   generate: (prompt: string, specification: string, format: GeneratedFileFormat) =>
     apiFetch<GeneratedFilePayload>("/api/files/generate", {
       method: "POST",
