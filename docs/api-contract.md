@@ -149,6 +149,10 @@ validated multi-sheet export plan and the server fills it using exhaustive,
 user-scoped structured queries. Row exports are not limited to semantic search
 matches or the interactive query display limit. Summary sheets can contain
 deterministic sums, counts, distinct counts, averages, minimums, and maximums.
+Row-wide keyword matching is available for spreadsheets with inaccurate or
+shifted headers. A zero-row text filter is retried across populated cells and,
+when recovered, the workbook records that fallback; otherwise generation fails
+instead of returning an empty spreadsheet.
 The browser converts the resulting payload into the final downloadable file.
 
 Response:

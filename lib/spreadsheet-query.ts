@@ -321,7 +321,11 @@ type ResolvedSheet = {
   valueColumn: StructuredSpreadsheetColumn | null;
   groupColumn: StructuredSpreadsheetColumn | null;
   selectedColumns: StructuredSpreadsheetColumn[];
-  filters: { filter: SpreadsheetFilter; column: StructuredSpreadsheetColumn }[];
+  filters: {
+    filter: SpreadsheetFilter;
+    column: StructuredSpreadsheetColumn | null;
+    anyColumn: boolean;
+  }[];
 };
 
 function aggregateRows(
@@ -408,15 +412,19 @@ export function executeStructuredSpreadsheetQuery(
     const selectedColumns = selectedNames
       .map((name) => resolveColumn(schema.columns, name))
       .filter((column): column is StructuredSpreadsheetColumn => Boolean(column));
-    const filters = request.filters.map((filter) => ({
-      filter,
-      column: resolveColumn(schema.columns, filter.column),
-    }));
+    const filters = request.filters.map((filter) => {
+      const anyColumn = filter.column === "*";
+      return {
+        filter,
+        column: anyColumn ? null : resolveColumn(schema.columns, filter.column),
+        anyColumn,
+      };
+    });
     const compatible =
       (!request.column || valueColumn) &&
       (!request.groupBy || groupColumn) &&
       selectedColumns.length === selectedNames.length &&
-      filters.every(({ column }) => column);
+      filters.every(({ column, anyColumn }) => anyColumn || column);
     if (!compatible) {
       if (request.sheetName) {
         throw new SpreadsheetQueryInputError(
@@ -453,8 +461,10 @@ export function executeStructuredSpreadsheetQuery(
   }[] = [];
   for (const sheet of resolved) {
     for (const row of sheet.rows) {
-      const decisions = sheet.filters.map(({ filter, column }) =>
-        matchesFilter(cellByColumn(row, column.column), filter),
+      const decisions = sheet.filters.map(({ filter, column, anyColumn }) =>
+        anyColumn
+          ? row.cells.some((cell) => matchesFilter(cell, filter))
+          : matchesFilter(cellByColumn(row, column!.column), filter),
       );
       const matched =
         decisions.length === 0 ||
