@@ -26,7 +26,9 @@ function toolCallResponse(name: string, argsObj: unknown, id = "call_1") {
   return {
     role: "assistant" as const,
     content: null,
-    tool_calls: [{ id, type: "function" as const, function: { name, arguments: JSON.stringify(argsObj) } }],
+    tool_calls: [
+      { id, type: "function" as const, function: { name, arguments: JSON.stringify(argsObj) } },
+    ],
   };
 }
 
@@ -35,6 +37,50 @@ beforeEach(() => {
 });
 
 describe("runAgentLoop", () => {
+  it("turns a deterministic spreadsheet query into a cited source", async () => {
+    mockChat
+      .mockResolvedValueOnce(
+        toolCallResponse("query_spreadsheet", {
+          documentName: "INS.xlsx",
+          operation: "sum",
+          column: "expenses",
+          filters: [{ column: "Policy #", operator: "contains", value: "fire" }],
+        }),
+      )
+      .mockResolvedValueOnce("The total is 10,577,164.66 [1].")
+      .mockResolvedValueOnce("supported");
+    mockExecuteTool.mockResolvedValueOnce({
+      ok: true,
+      documentName: "INS.xlsx",
+      operation: "sum",
+      column: "expenses",
+      filters: [],
+      worksheets: ["Sheet1"],
+      matchedRowCount: 49,
+      evidence: [{ sheetName: "Sheet1", rowNumber: 6, address: "J6", value: "7454" }],
+      evidenceTruncated: false,
+      value: "10577164.656696111",
+      formattedValue: "10,577,164.66",
+      numericValueCount: 49,
+      skippedNonNumeric: 0,
+      uploadedAt: "2026-10-15",
+      scope: { trimmed: false },
+    });
+
+    const result = await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
+
+    expect(result.answer).toContain("10,577,164.66");
+    expect(result.sources).toEqual([
+      expect.objectContaining({
+        documentName: "INS.xlsx",
+        score: 1,
+        chunkText: expect.stringContaining("matched 49 row(s)"),
+      }),
+    ]);
+    const toolMessage = mockChat.mock.calls[1][0].at(-1);
+    expect(JSON.parse(String(toolMessage?.content))).toMatchObject({ citation: "[1]" });
+  });
+
   it("loops through two different search_notes calls before answering", async () => {
     mockChat
       .mockResolvedValueOnce(toolCallResponse("search_notes", { query: "first thing" }))
@@ -51,8 +97,18 @@ describe("runAgentLoop", () => {
     const result = await runAgentLoop(initialMessages, noTools, TEST_USER_ID);
 
     expect(mockExecuteTool).toHaveBeenCalledTimes(2);
-    expect(mockExecuteTool).toHaveBeenNthCalledWith(1, "search_notes", { query: "first thing" }, TEST_USER_ID);
-    expect(mockExecuteTool).toHaveBeenNthCalledWith(2, "search_notes", { query: "second thing" }, TEST_USER_ID);
+    expect(mockExecuteTool).toHaveBeenNthCalledWith(
+      1,
+      "search_notes",
+      { query: "first thing" },
+      TEST_USER_ID,
+    );
+    expect(mockExecuteTool).toHaveBeenNthCalledWith(
+      2,
+      "search_notes",
+      { query: "second thing" },
+      TEST_USER_ID,
+    );
 
     // 2 tool-calling iterations + 1 final-answer iteration + 1 self-check call.
     expect(mockChat).toHaveBeenCalledTimes(4);
@@ -64,8 +120,12 @@ describe("runAgentLoop", () => {
     // Each iteration is diagnosable from logs alone: iteration number, tool
     // name, and args should all show up somewhere in the log lines.
     const logs = logSpy.mock.calls.map((c) => String(c[0]));
-    expect(logs.some((l) => /iteration 1/.test(l) && /search_notes/.test(l) && /first thing/.test(l))).toBe(true);
-    expect(logs.some((l) => /iteration 2/.test(l) && /search_notes/.test(l) && /second thing/.test(l))).toBe(true);
+    expect(
+      logs.some((l) => /iteration 1/.test(l) && /search_notes/.test(l) && /first thing/.test(l)),
+    ).toBe(true);
+    expect(
+      logs.some((l) => /iteration 2/.test(l) && /search_notes/.test(l) && /second thing/.test(l)),
+    ).toBe(true);
     expect(logs.some((l) => /iteration 3/.test(l) && /final answer/i.test(l))).toBe(true);
 
     logSpy.mockRestore();
@@ -81,7 +141,9 @@ describe("runAgentLoop", () => {
 
     expect(mockChat).toHaveBeenCalledTimes(4);
     expect(mockExecuteTool).toHaveBeenCalledTimes(4);
-    expect(result.answer).toBe("I couldn't find a confident answer in your notes for this question.");
+    expect(result.answer).toBe(
+      "I couldn't find a confident answer in your notes for this question.",
+    );
     expect(result.groundednessWarning).toBeUndefined();
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("iteration cap"));
 
@@ -207,12 +269,17 @@ describe("runAgentLoop", () => {
     expect(mockChat.mock.calls[0][1]).toBeUndefined();
 
     const loopMessages = mockChat.mock.calls[1][0];
-    const hint = loopMessages.find((m) => m.role === "system" && m.content?.includes("Context hint"));
+    const hint = loopMessages.find(
+      (m) => m.role === "system" && m.content?.includes("Context hint"),
+    );
     expect(hint).toBeDefined();
     expect(hint?.content).toContain("who leads the platform team");
 
     // Hint sits immediately before the unmodified current user message.
-    expect(loopMessages[loopMessages.length - 1]).toEqual({ role: "user", content: "who leads that?" });
+    expect(loopMessages[loopMessages.length - 1]).toEqual({
+      role: "user",
+      content: "who leads that?",
+    });
     expect(loopMessages[loopMessages.length - 2]).toBe(hint);
 
     expect(result.answer).toBe("direct answer");
@@ -270,7 +337,9 @@ describe("runAgentLoop", () => {
 
     mockChat
       .mockResolvedValueOnce("who leads the platform team") // rewrite
-      .mockResolvedValueOnce(toolCallResponse("search_notes", { query: "who leads the platform team" }))
+      .mockResolvedValueOnce(
+        toolCallResponse("search_notes", { query: "who leads the platform team" }),
+      )
       .mockResolvedValueOnce("Maria Chen.")
       .mockResolvedValueOnce("supported");
     mockExecuteTool.mockResolvedValueOnce([{ documentName: "d.md", chunkText: "c", score: 0.9 }]);

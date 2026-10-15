@@ -150,6 +150,8 @@ describe("POST /api/documents", () => {
       error: null,
     });
     const chunksInsert = chainable({ data: null, error: null });
+    const sheetsInsert = chainable({ data: null, error: null });
+    const rowsInsert = chainable({ data: null, error: null });
     const updatedDoc = chainable({
       data: {
         id: "excel-1",
@@ -165,6 +167,8 @@ describe("POST /api/documents", () => {
     mockFrom
       .mockImplementationOnce(() => insertedDoc as never)
       .mockImplementationOnce(() => chunksInsert as never)
+      .mockImplementationOnce(() => sheetsInsert as never)
+      .mockImplementationOnce(() => rowsInsert as never)
       .mockImplementationOnce(() => updatedDoc as never);
 
     const res = await POST(
@@ -182,6 +186,30 @@ describe("POST /api/documents", () => {
       expect.objectContaining({ trimmed_unit: "rows", included_count: 2, source_count: 8 }),
     );
     expect(mockEmbedMany).toHaveBeenCalledWith([expect.stringContaining('A2 / "Name"="Ada"')]);
+    expect(sheetsInsert.insert).toHaveBeenCalledWith([
+      expect.objectContaining({
+        document_id: "excel-1",
+        user_id: TEST_USER_ID,
+        sheet_name: "Data",
+        header_row_number: 1,
+        populated_row_count: 1,
+        columns: expect.arrayContaining([
+          expect.objectContaining({ header: "Name", headerKey: "name", letter: "A" }),
+          expect.objectContaining({ header: "Score", headerKey: "score", letter: "B" }),
+        ]),
+      }),
+    ]);
+    expect(rowsInsert.insert).toHaveBeenCalledWith([
+      expect.objectContaining({
+        document_id: "excel-1",
+        user_id: TEST_USER_ID,
+        sheet_name: "Data",
+        row_number: 2,
+        cells: expect.arrayContaining([
+          expect.objectContaining({ header: "Score", numericValue: "98", address: "B2" }),
+        ]),
+      }),
+    ]);
     await expect(res.json()).resolves.toEqual(
       expect.objectContaining({ trimmed: { unit: "rows", included: 2, total: 8 } }),
     );
@@ -337,6 +365,46 @@ describe("POST /api/documents", () => {
       /^Document ingestion failed while embedding chunks: embedding service down$/,
     );
     expect(body.document.status).toBe("failed");
+    expect(chunksDelete.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
+    expect(failedUpdate.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
+  });
+
+  it("cleans up typed spreadsheet rows when structured storage fails", async () => {
+    const insertedDoc = chainable({
+      data: { id: "excel-1", name: "data.xlsx", status: "processing", created_at: "2026-10-15" },
+      error: null,
+    });
+    const chunksInsert = chainable({ data: null, error: null });
+    const sheetsInsert = chainable({ data: null, error: null });
+    const rowsInsert = chainable({ data: null, error: { message: "row insert failed" } });
+    const chunksDelete = chainable({ data: null, error: null });
+    const rowsDelete = chainable({ data: null, error: null });
+    const sheetsDelete = chainable({ data: null, error: null });
+    const failedUpdate = chainable({ data: null, error: null });
+
+    mockFrom
+      .mockImplementationOnce(() => insertedDoc as never)
+      .mockImplementationOnce(() => chunksInsert as never)
+      .mockImplementationOnce(() => sheetsInsert as never)
+      .mockImplementationOnce(() => rowsInsert as never)
+      .mockImplementationOnce(() => chunksDelete as never)
+      .mockImplementationOnce(() => rowsDelete as never)
+      .mockImplementationOnce(() => sheetsDelete as never)
+      .mockImplementationOnce(() => failedUpdate as never);
+
+    const response = await POST(
+      await excelUploadRequest([
+        ["Policy #", "expenses"],
+        ["Fire", 10],
+      ]),
+    );
+
+    expect(response.status).toBe(500);
+    expect((await response.json()).error).toMatch(
+      /while storing spreadsheet structure: row insert failed/,
+    );
+    expect(rowsDelete.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
+    expect(sheetsDelete.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
     expect(chunksDelete.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
     expect(failedUpdate.eq).toHaveBeenCalledWith("user_id", TEST_USER_ID);
   });

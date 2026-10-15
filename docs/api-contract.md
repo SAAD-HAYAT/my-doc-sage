@@ -75,7 +75,10 @@ uploading it. Excel uploads are also capped at 10,000 populated rows and
 500,000 extracted characters, even when XLSX compression keeps the source
 below 4 MiB. Excel formatting and media are removed during optimization; cell
 values, sheet names, row numbers, formulas, and cached formula results are
-indexed. A trimmed upload also sends `trimmedUnit`, `includedCount`, and
+indexed. New Excel uploads also store typed worksheet metadata and populated
+rows for deterministic filtering and aggregation. Workbooks uploaded before
+the structured-query release must be re-uploaded to use calculations. A
+trimmed upload also sends `trimmedUnit`, `includedCount`, and
 `sourceCount` multipart fields; inconsistent metadata returns
 `400 { "error": "Invalid trim metadata" }`.
 
@@ -108,6 +111,13 @@ another user's document id is a no-op (scoped by user_id), not a 403/404.
 Body: `{ message: string, sessionId: string }`
 Response: `{ answer: string, sources: { documentName: string, chunkText: string, score: number }[] }`
 Requires auth: `401 { error: string }` with no valid session.
+
+Internally, the chat agent uses semantic `search_notes` for narrative questions
+and structured spreadsheet tools for exhaustive Excel operations. Supported
+structured operations include sums, counts, distinct counts, averages,
+minimums, maximums, grouped results, filters, and bounded row display. These
+tools scan every retained typed row and return their calculation as the same
+existing source shape, so the public response contract does not change.
 
 ### `POST /api/spreadsheets/classify-departments`
 
