@@ -7,12 +7,22 @@ export interface FeatureAnnouncement {
 
 export const FEATURE_ANNOUNCEMENTS: FeatureAnnouncement[] = [
   {
+    id: "2026-10-13-model-file-clarifications",
+    date: "October 13, 2026",
+    title: "Smarter file creation",
+    items: [
+      "File creation now starts immediately when your request already has enough detail.",
+      "When a choice is genuinely needed, the question and suggestions are tailored by the model.",
+      "Custom clarification prompts now explain the specific detail you can provide.",
+    ],
+  },
+  {
     id: "2026-10-12-workbook-categorization",
     date: "October 12, 2026",
     title: "Generate files from chat",
     items: [
       "Ask NotesRAG to create an Excel, PDF, or Markdown file.",
-      "Choose between two suggested specifications or enter a custom option in the chat composer.",
+      "Answer a tailored clarification or enter a custom option when more detail is needed.",
       "Categorize an uploaded workbook into four traceable worksheets without a separate toolbar action.",
     ],
   },

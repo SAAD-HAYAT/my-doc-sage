@@ -112,7 +112,7 @@ function ClarificationComposer({
         <Input
           value={custom}
           disabled={disabled}
-          placeholder="Custom option…"
+          placeholder={clarification.customPlaceholder}
           onChange={(event) => setCustom(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && custom.trim()) onAnswer(custom.trim());

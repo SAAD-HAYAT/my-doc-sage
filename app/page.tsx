@@ -21,10 +21,10 @@ import { FILE_SIZE_TOO_LARGE_MESSAGE, isUploadTooLarge } from "@/lib/document-up
 import { prepareDocumentUpload } from "@/lib/document-trimming";
 import {
   createDownloadableFile,
-  fileClarificationFor,
   requestedFileFormat,
   type DownloadableFile,
   type FileClarification,
+  type FileRequestPlan,
 } from "@/lib/generated-files";
 import {
   buildCategorizedWorkbook,
@@ -33,46 +33,8 @@ import {
   type WorkbookCategory,
 } from "@/lib/workbook-categorization";
 
-const DEFAULT_CATEGORIES: WorkbookCategory[] = [
-  {
-    id: "category-1",
-    name: "Production",
-    description: "Manufacturing, processing, assembly, packaging, operations, and quality control.",
-  },
-  {
-    id: "category-2",
-    name: "Maintenance",
-    description: "Mechanical, electrical, engineering, workshop, facilities, and utilities.",
-  },
-  {
-    id: "category-3",
-    name: "Administration",
-    description: "Finance, human resources, IT, legal, management, and administration.",
-  },
-  {
-    id: "category-4",
-    name: "Logistics",
-    description: "Warehouse, stores, procurement, supply chain, transport, and dispatch.",
-  },
-];
-
 function newSessionId() {
   return crypto.randomUUID();
-}
-
-function customCategories(answer: string): WorkbookCategory[] {
-  const names = answer
-    .split(/[,;\n]/)
-    .map((name) => name.trim())
-    .filter(Boolean);
-  if (names.length !== 4 || new Set(names.map((name) => name.toLowerCase())).size !== 4) {
-    throw new Error("Enter exactly four unique category names separated by commas.");
-  }
-  return names.map((name, index) => ({
-    id: `category-${index + 1}`,
-    name,
-    description: `Departments that belong to ${name}.`,
-  }));
 }
 
 function startDownload(file: DownloadableFile) {
@@ -183,41 +145,113 @@ export default function Index() {
     }
   }, []);
 
+  const createCategorizedDownload = useCallback(
+    async (
+      request: Extract<FileRequestPlan, { action: "generate"; mode: "categorize-workbook" }>,
+    ): Promise<DownloadableFile> => {
+      if (!sourceWorkbook) {
+        throw new Error(
+          "Upload the source Excel workbook in this browser session before requesting categorization.",
+        );
+      }
+
+      const loaded = await loadCategorizationWorkbook(await sourceWorkbook.arrayBuffer());
+      let departmentHeader: string;
+      let categories: WorkbookCategory[];
+      let assignments: { department: string; categoryId: string }[];
+
+      if (request.categorization.strategy === "existing-category-column") {
+        const categoryHeader = loaded.headers.find(
+          (header) => header.trim().toLocaleLowerCase("en-US") === "category",
+        );
+        if (!categoryHeader) throw new Error("No Category column was found in the workbook.");
+        const values = listWorkbookDepartments(loaded, categoryHeader);
+        if (values.length !== 4) {
+          throw new Error(
+            `The Category column contains ${values.length} unique values instead of 4.`,
+          );
+        }
+        categories = values.map((name, index) => ({
+          id: `category-${index + 1}`,
+          name,
+          description: name,
+        }));
+        assignments = values.map((department, index) => ({
+          department,
+          categoryId: `category-${index + 1}`,
+        }));
+        departmentHeader = categoryHeader;
+      } else {
+        categories = request.categorization.categories;
+        departmentHeader =
+          loaded.inferredDepartmentHeader ??
+          loaded.headers.find((header) => /^(?:name|department|dept|section)$/i.test(header)) ??
+          loaded.headers[0];
+        const departments = listWorkbookDepartments(loaded, departmentHeader);
+        ({ assignments } = await spreadsheetApi.classifyDepartments(departments, categories));
+      }
+
+      const result = await buildCategorizedWorkbook(
+        loaded,
+        departmentHeader,
+        categories,
+        assignments,
+      );
+      const base = sourceWorkbook.name.replace(/\.xlsx$/i, "") || "workbook";
+      return {
+        name: `${base}-categorized.xlsx`,
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        url: URL.createObjectURL(
+          new Blob([Uint8Array.from(result.bytes)], {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }),
+        ),
+      };
+    },
+    [sourceWorkbook],
+  );
+
+  const executeFilePlan = useCallback(
+    async (prompt: string, plan: Extract<FileRequestPlan, { action: "generate" }>) => {
+      const generatedFile =
+        plan.mode === "categorize-workbook"
+          ? await createCategorizedDownload(plan)
+          : await createDownloadableFile(
+              await filesApi.generate(prompt, plan.specification, plan.format),
+            );
+      startDownload(generatedFile);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Created ${generatedFile.name}. You can download it again below.`,
+          generatedFile,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    },
+    [createCategorizedDownload],
+  );
+
   const handleSend = useCallback(
     async (text: string) => {
       setMessages((prev) => [
         ...prev,
         { role: "user", content: text, createdAt: new Date().toISOString() },
       ]);
-      const fileRequest = fileClarificationFor(text);
-      if (fileRequest) {
-        setClarification(fileRequest);
-        return;
-      }
 
       const explicitFormat = requestedFileFormat(text);
       if (explicitFormat) {
         setSending(true);
         try {
-          const generatedFile = await createDownloadableFile(
-            await filesApi.generate(
-              text,
-              "Use the organization and level of detail explicitly stated in the request.",
-              explicitFormat,
-            ),
-          );
-          startDownload(generatedFile);
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: `Created ${generatedFile.name}. You can download it again below.`,
-              generatedFile,
-              createdAt: new Date().toISOString(),
-            },
-          ]);
+          const plan = await filesApi.plan(text, explicitFormat);
+          if (plan.action === "clarify") {
+            setClarification({ ...plan, prompt: text, answers: [] });
+          } else {
+            await executeFilePlan(text, plan);
+          }
         } catch (error) {
-          toast.error("Could not generate the requested file.", {
+          toast.error("Could not prepare the requested file.", {
             description: error instanceof Error ? error.message : undefined,
           });
         } finally {
@@ -252,72 +286,7 @@ export default function Index() {
         setSending(false);
       }
     },
-    [sessionId],
-  );
-
-  const createCategorizedDownload = useCallback(
-    async (request: FileClarification, answer: string): Promise<DownloadableFile> => {
-      if (!sourceWorkbook) {
-        throw new Error(
-          "Upload the source Excel workbook in this browser session before requesting categorization.",
-        );
-      }
-
-      const loaded = await loadCategorizationWorkbook(await sourceWorkbook.arrayBuffer());
-      const useExistingCategory = answer === request.options[1];
-      let departmentHeader: string;
-      let categories: WorkbookCategory[];
-      let assignments: { department: string; categoryId: string }[];
-
-      if (useExistingCategory) {
-        const categoryHeader = loaded.headers.find(
-          (header) => header.trim().toLocaleLowerCase("en-US") === "category",
-        );
-        if (!categoryHeader) throw new Error("No Category column was found in the workbook.");
-        const values = listWorkbookDepartments(loaded, categoryHeader);
-        if (values.length !== 4) {
-          throw new Error(
-            `The Category column contains ${values.length} unique values instead of 4.`,
-          );
-        }
-        categories = values.map((name, index) => ({
-          id: `category-${index + 1}`,
-          name,
-          description: name,
-        }));
-        assignments = values.map((department, index) => ({
-          department,
-          categoryId: `category-${index + 1}`,
-        }));
-        departmentHeader = categoryHeader;
-      } else {
-        categories = answer === request.options[0] ? DEFAULT_CATEGORIES : customCategories(answer);
-        departmentHeader =
-          loaded.inferredDepartmentHeader ??
-          loaded.headers.find((header) => /^(?:name|department|dept|section)$/i.test(header)) ??
-          loaded.headers[0];
-        const departments = listWorkbookDepartments(loaded, departmentHeader);
-        ({ assignments } = await spreadsheetApi.classifyDepartments(departments, categories));
-      }
-
-      const result = await buildCategorizedWorkbook(
-        loaded,
-        departmentHeader,
-        categories,
-        assignments,
-      );
-      const base = sourceWorkbook.name.replace(/\.xlsx$/i, "") || "workbook";
-      return {
-        name: `${base}-categorized.xlsx`,
-        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        url: URL.createObjectURL(
-          new Blob([Uint8Array.from(result.bytes)], {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          }),
-        ),
-      };
-    },
-    [sourceWorkbook],
+    [executeFilePlan, sessionId],
   );
 
   const handleClarification = useCallback(
@@ -329,32 +298,23 @@ export default function Index() {
       ]);
       setSending(true);
       try {
-        const generatedFile =
-          clarification.mode === "categorize-workbook"
-            ? await createCategorizedDownload(clarification, answer)
-            : await createDownloadableFile(
-                await filesApi.generate(clarification.prompt, answer, clarification.format),
-              );
-        startDownload(generatedFile);
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `Created ${generatedFile.name}. You can download it again below.`,
-            generatedFile,
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        setClarification(null);
+        const answers = [...clarification.answers, answer];
+        const plan = await filesApi.plan(clarification.prompt, clarification.format, answers);
+        if (plan.action === "clarify") {
+          setClarification({ ...plan, prompt: clarification.prompt, answers });
+        } else {
+          await executeFilePlan(clarification.prompt, plan);
+          setClarification(null);
+        }
       } catch (error) {
-        toast.error("Could not generate the requested file.", {
+        toast.error("Could not prepare the requested file.", {
           description: error instanceof Error ? error.message : undefined,
         });
       } finally {
         setSending(false);
       }
     },
-    [clarification, createCategorizedDownload, sending],
+    [clarification, executeFilePlan, sending],
   );
 
   const handleNewChat = useCallback(() => {
