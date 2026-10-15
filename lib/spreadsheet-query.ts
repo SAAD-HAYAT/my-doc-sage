@@ -490,6 +490,14 @@ export function executeStructuredSpreadsheetQuery(
   if (request.operation === "rows") {
     return {
       ...base,
+      selectedColumns: resolved.map(({ schema, selectedColumns }) => ({
+        sheetName: schema.sheet_name,
+        columns: (selectedColumns.length ? selectedColumns : schema.columns).map((column) => ({
+          header: column.header,
+          letter: column.letter,
+          valueTypes: column.valueTypes,
+        })),
+      })),
       rows: matches.slice(0, request.limit).map(({ sheet, row }) => {
         const selected = sheet.selectedColumns.length
           ? sheet.selectedColumns
@@ -503,6 +511,10 @@ export function executeStructuredSpreadsheetQuery(
               column: column.header,
               address: cell?.address ?? null,
               value: cell?.text ?? null,
+              valueType: cell?.valueType ?? null,
+              numericValue: cell?.numericValue ?? null,
+              dateValue: cell?.dateValue ?? null,
+              booleanValue: cell?.booleanValue ?? null,
             };
           }),
         };
@@ -641,8 +653,7 @@ async function rowsForSheets(
   return result;
 }
 
-export async function querySpreadsheet(userId: string, rawRequest: unknown) {
-  const request = parseSpreadsheetQueryRequest(rawRequest);
+async function executeStoredSpreadsheetQuery(userId: string, request: SpreadsheetQueryRequest) {
   const documents = await readyExcelDocuments(userId);
   const matching = request.documentName
     ? documents.filter(
@@ -706,6 +717,18 @@ export async function querySpreadsheet(userId: string, rawRequest: unknown) {
           }
         : { trimmed: false },
   };
+}
+
+export async function querySpreadsheet(userId: string, rawRequest: unknown) {
+  return executeStoredSpreadsheetQuery(userId, parseSpreadsheetQueryRequest(rawRequest));
+}
+
+export async function exportSpreadsheetRows(userId: string, rawRequest: unknown) {
+  const request = parseSpreadsheetQueryRequest(rawRequest);
+  if (request.operation !== "rows") {
+    throw new SpreadsheetQueryInputError("Spreadsheet row exports require the rows operation");
+  }
+  return executeStoredSpreadsheetQuery(userId, { ...request, limit: 10_000 });
 }
 
 export type SpreadsheetQueryResult = Awaited<ReturnType<typeof querySpreadsheet>>;

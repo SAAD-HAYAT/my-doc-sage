@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: vi.fn() } }));
 import {
   executeStructuredSpreadsheetQuery,
+  exportSpreadsheetRows,
   inspectSpreadsheets,
   parseSpreadsheetQueryRequest,
   querySpreadsheet,
@@ -234,6 +235,55 @@ describe("structured spreadsheet queries", () => {
       expect(query.eq).toHaveBeenCalledWith("user_id", "user-1");
     }
     expect(rowQuery.range).toHaveBeenCalledWith(0, 999);
+  });
+
+  it("exports every matching row beyond the interactive display limit", async () => {
+    const data = await structuredFixture();
+    const rows = Array.from({ length: 150 }, (_, index) => {
+      const source = data.rows[index % data.rows.length];
+      const rowNumber = index + 2;
+      return {
+        ...source,
+        row_number: rowNumber,
+        cells: source.cells.map((cell) => ({
+          ...cell,
+          address: cell.address.replace(/\d+$/, String(rowNumber)),
+        })),
+      };
+    });
+    const documentQuery = chainable({
+      data: [
+        {
+          id: "doc-1",
+          name: "INS.xlsx",
+          status: "ready",
+          created_at: "2026-10-15",
+          trimmed_unit: null,
+          included_count: null,
+          source_count: null,
+        },
+      ],
+      error: null,
+    });
+    const sheetQuery = chainable({ data: data.sheets, error: null });
+    const rowQuery = chainable({ data: rows, error: null });
+    mockFrom
+      .mockImplementationOnce(() => documentQuery as never)
+      .mockImplementationOnce(() => sheetQuery as never)
+      .mockImplementationOnce(() => rowQuery as never);
+
+    const result = await exportSpreadsheetRows("user-1", {
+      documentName: "INS.xlsx",
+      sheetName: "Policies",
+      operation: "rows",
+      columns: ["Policy #", "expenses"],
+      filters: [],
+      limit: 1,
+    });
+
+    expect("rows" in result ? result.rows : []).toHaveLength(150);
+    expect("rowsTruncated" in result && result.rowsTruncated).toBe(false);
+    expect(rowQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
   });
 
   it("marks pre-Phase-12 workbooks as requiring re-upload", async () => {

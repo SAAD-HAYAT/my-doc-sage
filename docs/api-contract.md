@@ -144,7 +144,12 @@ Body:
 The endpoint retrieves relevant passages belonging to the authenticated user
 and returns a validated file payload. Excel responses contain worksheet names
 and cell rows; PDF and Markdown responses contain Markdown document content.
-The browser converts that payload into the final downloadable file.
+For a workbook derived from an uploaded Excel file, the model produces a
+validated multi-sheet export plan and the server fills it using exhaustive,
+user-scoped structured queries. Row exports are not limited to semantic search
+matches or the interactive query display limit. Summary sheets can contain
+deterministic sums, counts, distinct counts, averages, minimums, and maximums.
+The browser converts the resulting payload into the final downloadable file.
 
 Response:
 `{ format: "xlsx", name: string, sheets: { name: string, rows: (string | number | boolean | null)[][] }[] }`

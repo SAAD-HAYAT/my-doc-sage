@@ -165,7 +165,7 @@ drop function if exists hybrid_search(vector(1024), text, int);
 -- unused by application code (Phase 5 switched to hybrid_search below);
 -- kept and still user-scoped for reference/safety rather than left as a
 -- dangerous unscoped function sitting in the database.
-create function match_chunks(
+create or replace function match_chunks(
   query_embedding vector(1024),
   p_user_id uuid,
   match_count int default 5
@@ -213,7 +213,7 @@ $$;
 -- rewriting its '&' to '|' and re-parsing with to_tsquery is a safe,
 -- standard way to turn it into an OR query without re-exposing raw user
 -- input to tsquery's operator syntax.
-create function hybrid_search(
+create or replace function hybrid_search(
   query_embedding vector(1024),
   query_text text,
   p_user_id uuid,
