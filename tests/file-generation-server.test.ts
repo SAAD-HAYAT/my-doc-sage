@@ -244,6 +244,119 @@ describe("generated file payloads", () => {
     expect(String(mockChat.mock.calls[0][0][1].content)).toContain("INS.xlsx");
   });
 
+  it("recovers a zero-row keyword export across all columns instead of downloading an empty file", async () => {
+    mockChat.mockResolvedValue(
+      JSON.stringify({
+        mode: "structured",
+        sheets: [
+          {
+            kind: "rows",
+            name: "Terrorism policies",
+            query: {
+              documentName: "INS.xlsx",
+              sheetName: "Sheet1",
+              operation: "rows",
+              columns: ["Policy #"],
+              filters: [{ column: "Description", operator: "contains", value: "terrorism" }],
+            },
+          },
+        ],
+      }),
+    );
+    const common = {
+      ok: true as const,
+      operation: "rows" as const,
+      column: null,
+      filters: [],
+      worksheets: ["Sheet1"],
+      evidence: [],
+      evidenceTruncated: false,
+      rowsTruncated: false,
+      documentName: "INS.xlsx",
+      uploadedAt: "2026-10-15",
+      scope: { trimmed: false as const },
+    };
+    mockExportSpreadsheetRows
+      .mockResolvedValueOnce({
+        ...common,
+        matchedRowCount: 0,
+        selectedColumns: [
+          {
+            sheetName: "Sheet1",
+            columns: [{ header: "Policy #", letter: "D", valueTypes: ["text"] }],
+          },
+        ],
+        rows: [],
+      })
+      .mockResolvedValueOnce({
+        ...common,
+        matchedRowCount: 1,
+        selectedColumns: [
+          {
+            sheetName: "Sheet1",
+            columns: [
+              { header: "Description", letter: "C", valueTypes: ["text"] },
+              { header: "Policy #", letter: "D", valueTypes: ["text"] },
+            ],
+          },
+        ],
+        rows: [
+          {
+            sheetName: "Sheet1",
+            rowNumber: 5,
+            values: [
+              {
+                column: "Description",
+                address: "C5",
+                value: "2590848797/07/2024",
+                valueType: "text",
+                numericValue: null,
+                dateValue: null,
+                booleanValue: null,
+              },
+              {
+                column: "Policy #",
+                address: "D5",
+                value: "TERRORISM INSURANCE",
+                valueType: "text",
+                numericValue: null,
+                dateValue: null,
+                booleanValue: null,
+              },
+            ],
+          },
+        ],
+      });
+
+    const payload = await generateFilePayload(
+      "I need make a separate excel file for all the policies number under terrorism",
+      "Export the matching policy numbers",
+      "xlsx",
+      "user-1",
+    );
+
+    expect(mockExportSpreadsheetRows).toHaveBeenCalledTimes(2);
+    expect(mockExportSpreadsheetRows).toHaveBeenLastCalledWith(
+      "user-1",
+      expect.objectContaining({
+        columns: undefined,
+        filters: [expect.objectContaining({ column: "*", operator: "contains" })],
+      }),
+    );
+    expect(payload).toMatchObject({
+      sheets: [
+        {
+          rows: [
+            ["Source worksheet", "Source row", "Description", "Policy #"],
+            ["Sheet1", 5, "2590848797/07/2024", "TERRORISM INSURANCE"],
+            [],
+            ["Export note", expect.stringContaining("matched across all populated columns")],
+          ],
+        },
+      ],
+    });
+  });
+
   it("rejects malformed Excel output rather than creating a corrupt workbook", async () => {
     mockChat.mockResolvedValue('{"sheets":[]}');
     await expect(

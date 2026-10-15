@@ -190,6 +190,29 @@ function scopeDescription(scope: {
     : "All uploaded rows";
 }
 
+function rowWideKeywordFallback(query: SpreadsheetQueryRequest): SpreadsheetQueryRequest | null {
+  if (query.filters.length === 0) return null;
+  const filters = query.filters.map((filter) => {
+    if (
+      typeof filter.value !== "string" ||
+      !["contains", "equals", "starts_with", "ends_with"].includes(filter.operator)
+    ) {
+      return null;
+    }
+    return {
+      ...filter,
+      column: "*",
+      operator: filter.operator === "equals" ? ("contains" as const) : filter.operator,
+    };
+  });
+  if (filters.some((filter) => filter === null)) return null;
+  return {
+    ...query,
+    filters: filters as SpreadsheetQueryRequest["filters"],
+    ...(query.sheetName ? { columns: undefined } : {}),
+  };
+}
+
 async function buildStructuredWorkbook(
   plan: StructuredWorkbookPlan,
   userId: string,
@@ -197,9 +220,25 @@ async function buildStructuredWorkbook(
   const output: GeneratedWorksheet[] = [];
   for (const sheet of plan.sheets) {
     if (sheet.kind === "rows") {
-      const result = await exportSpreadsheetRows(userId, sheet.query);
+      let result = await exportSpreadsheetRows(userId, sheet.query);
+      let recoveredAcrossColumns = false;
+      if (result.matchedRowCount === 0) {
+        const fallback = rowWideKeywordFallback(sheet.query);
+        if (fallback) {
+          const fallbackResult = await exportSpreadsheetRows(userId, fallback);
+          if (fallbackResult.matchedRowCount > 0) {
+            result = fallbackResult;
+            recoveredAcrossColumns = true;
+          }
+        }
+      }
       if (!("rows" in result) || !("selectedColumns" in result)) {
         throw new Error(`Could not produce row export for ${sheet.name}`);
+      }
+      if (result.matchedRowCount === 0) {
+        throw new Error(
+          `No rows matched the requested filters for ${sheet.name}; no empty workbook was created`,
+        );
       }
       const columns = result.selectedColumns[0]?.columns ?? [];
       const rows: GeneratedCellValue[][] = [
@@ -212,6 +251,15 @@ async function buildStructuredWorkbook(
       ];
       if (result.scope.trimmed) {
         rows.push([], ["Source scope", scopeDescription(result.scope)]);
+      }
+      if (recoveredAcrossColumns) {
+        rows.push(
+          [],
+          [
+            "Export note",
+            "The requested column filter matched no rows, so the keyword was matched across all populated columns and all source columns were included.",
+          ],
+        );
       }
       output.push({ name: sheet.name, rows });
       continue;
@@ -273,6 +321,11 @@ export async function generateFilePayload(
           "reorganizes, or summarizes rows from an available structured workbook, use structured mode so " +
           "the server—not the model—reads every matching row. Never reproduce uploaded spreadsheet rows " +
           "from document passages. Use exact workbook, worksheet, and column names from the supplied schemas. " +
+          "Spreadsheet headers can be inaccurate or shifted; compare the supplied document-passage cell examples " +
+          "with the schema before choosing output columns. If a keyword such as a policy category may appear in " +
+          'different or unreliable columns, filter with column "*" and operator "contains". When the requested ' +
+          "value appears under a differently named column, select the column containing that value; if uncertain, " +
+          "omit columns so the named source worksheet exports all columns. Never return a deliberately empty sheet. " +
           "For a new template or a small workbook authored from narrative context, use direct mode. " +
           'Direct schema: {"mode":"direct","sheets":[{"name":"Sheet name","rows":[["Header"],["value"]]}]}. ' +
           'Structured rows sheet: {"mode":"structured","sheets":[{"kind":"rows","name":"Output",' +

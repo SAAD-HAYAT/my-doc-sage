@@ -123,6 +123,23 @@ describe("structured spreadsheet queries", () => {
     expect("rowsTruncated" in rows && rows.rowsTruncated).toBe(true);
   });
 
+  it("supports row-wide keyword filters for inconsistent spreadsheet layouts", async () => {
+    const data = await structuredFixture();
+    const result = executeStructuredSpreadsheetQuery(
+      data.sheets,
+      data.rows,
+      parseSpreadsheetQueryRequest({
+        operation: "rows",
+        sheetName: "Policies",
+        columns: ["Policy #", "expenses"],
+        filters: [{ column: "*", operator: "contains", value: "fire" }],
+      }),
+    );
+
+    expect(result).toMatchObject({ matchedRowCount: 50 });
+    expect("rows" in result ? result.rows : []).toHaveLength(25);
+  });
+
   it("rejects unknown and ambiguous columns instead of guessing", () => {
     const sheet: StoredSpreadsheetSheet = {
       document_id: "doc-1",

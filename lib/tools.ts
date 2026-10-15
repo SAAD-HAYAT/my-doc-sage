@@ -105,7 +105,11 @@ export const querySpreadsheetTool: ToolDefinition = {
           items: {
             type: "object",
             properties: {
-              column: { type: "string" },
+              column: {
+                type: "string",
+                description:
+                  'Exact column name, or "*" to test the text filter against every populated cell in a row.',
+              },
               operator: {
                 type: "string",
                 enum: [

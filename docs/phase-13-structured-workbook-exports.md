@@ -20,6 +20,12 @@ set of semantic-search passages.
   - summary worksheets containing deterministic scalar metrics.
 - Structured row sheets use Phase 12's typed row store and scan every retained
   row. The model never receives or reproduces the complete source dataset.
+- A `*` filter target performs a row-wide keyword match for workbooks whose
+  headers are shifted, inaccurate, or inconsistent across appended sections.
+- If a model-selected text column returns no rows, generation retries that
+  keyword across all populated columns, includes all source columns, and writes
+  an export note explaining the recovery. If nothing matches, generation fails
+  clearly instead of downloading an empty workbook.
 - Summary metrics use the same exact-decimal aggregation path as chat answers.
 - Numeric and boolean values remain typed in the generated workbook. Dates are
   represented deterministically as ISO text and formulas use cached results.
@@ -44,6 +50,8 @@ set of semantic-search passages.
 - Structured queries are authenticated and user-scoped.
 - Unknown workbooks, worksheets, columns, malformed filters, and legacy
   workbooks fail clearly instead of generating incomplete data.
+- Inconsistent header layouts can still export keyword matches without silently
+  producing an empty workbook.
 - Direct Excel, PDF, Markdown, and workbook-categorization behavior remains
   unchanged.
 - The browser receives the existing generated-workbook payload and downloads a
