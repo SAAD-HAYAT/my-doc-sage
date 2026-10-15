@@ -7,6 +7,26 @@ export interface FeatureAnnouncement {
 
 export const FEATURE_ANNOUNCEMENTS: FeatureAnnouncement[] = [
   {
+    id: "2026-10-15-structured-workbook-exports",
+    date: "October 15, 2026",
+    title: "Complete Excel exports",
+    items: [
+      "Generate multi-sheet workbooks from uploaded Excel data directly from chat.",
+      "Filtered row exports now include every retained match instead of only search passages.",
+      "Combine detailed row sheets with exact totals, counts, averages, minimums, and maximums.",
+    ],
+  },
+  {
+    id: "2026-10-15-structured-spreadsheet-queries",
+    date: "October 15, 2026",
+    title: "Reliable Excel calculations",
+    items: [
+      "Ask for totals, counts, averages, minimums, maximums, filters, and grouped Excel results.",
+      "Calculations now scan every retained workbook row instead of relying on a few search matches.",
+      "Answers report matched rows and disclose when a workbook was trimmed or needs re-uploading.",
+    ],
+  },
+  {
     id: "2026-10-13-model-file-clarifications",
     date: "October 13, 2026",
     title: "Smarter file creation",

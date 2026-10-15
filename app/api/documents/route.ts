@@ -4,7 +4,12 @@ import { getAuthenticatedUser } from "@/lib/supabase-server";
 import { chunkText, countTokens, splitToTokenLimit, MAX_EMBED_TOKENS } from "@/lib/chunking";
 import { embedMany } from "@/lib/openrouter";
 import { extractPdfText } from "@/lib/pdf-text";
-import { extractSpreadsheetText, isExcelFile } from "@/lib/spreadsheet";
+import {
+  extractSpreadsheet,
+  extractSpreadsheetText,
+  isExcelFile,
+  type ExtractedSpreadsheet,
+} from "@/lib/spreadsheet";
 import {
   FILE_SIZE_TOO_LARGE_MESSAGE,
   isUploadTooLarge,
@@ -16,6 +21,7 @@ import {
 export const runtime = "nodejs";
 
 const CHUNK_INSERT_BATCH_SIZE = 50;
+const SPREADSHEET_ROW_INSERT_BATCH_SIZE = 250;
 const UNSUPPORTED_FILE_MESSAGE =
   "Unsupported file type. Upload a PDF, Markdown, or Excel (.xlsx) file.";
 
@@ -152,9 +158,11 @@ export async function POST(req: NextRequest) {
   // malformed, or empty workbook should be rejected as an upload error rather
   // than leaving a permanent failed document behind.
   let spreadsheetText: string | null = null;
+  let spreadsheet: ExtractedSpreadsheet | null = null;
   if (kind === "excel") {
     try {
-      spreadsheetText = await extractRawText(file, kind);
+      spreadsheet = await extractSpreadsheet(new Uint8Array(await file.arrayBuffer()));
+      spreadsheetText = spreadsheet.text;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       return NextResponse.json(
@@ -235,6 +243,40 @@ export async function POST(req: NextRequest) {
       if (chunkError) throw new Error(chunkError.message);
     }
 
+    if (spreadsheet) {
+      ingestionStage = "storing spreadsheet structure";
+      const { error: sheetError } = await supabaseAdmin.from("spreadsheet_sheets").insert(
+        spreadsheet.sheets.map((sheet) => ({
+          document_id: doc.id,
+          user_id: user.id,
+          sheet_name: sheet.sheetName,
+          sheet_state: sheet.sheetState,
+          header_row_number: sheet.headerRowNumber,
+          columns: sheet.columns,
+          populated_row_count: sheet.populatedRowCount,
+        })),
+      );
+      if (sheetError) throw new Error(sheetError.message);
+
+      const spreadsheetRows = spreadsheet.rows.map((row) => ({
+        document_id: doc.id,
+        user_id: user.id,
+        sheet_name: row.sheetName,
+        row_number: row.rowNumber,
+        cells: row.cells,
+      }));
+      for (
+        let start = 0;
+        start < spreadsheetRows.length;
+        start += SPREADSHEET_ROW_INSERT_BATCH_SIZE
+      ) {
+        const { error: rowError } = await supabaseAdmin
+          .from("spreadsheet_rows")
+          .insert(spreadsheetRows.slice(start, start + SPREADSHEET_ROW_INSERT_BATCH_SIZE));
+        if (rowError) throw new Error(rowError.message);
+      }
+    }
+
     ingestionStage = "finalizing the document";
     const { data: updated, error: updateError } = await supabaseAdmin
       .from("documents")
@@ -251,6 +293,18 @@ export async function POST(req: NextRequest) {
     // Leave a clean state: drop any chunks already inserted for this
     // document before flipping to "failed", so a retry starts from zero.
     await supabaseAdmin.from("chunks").delete().eq("document_id", doc.id).eq("user_id", user.id);
+    if (spreadsheet) {
+      await supabaseAdmin
+        .from("spreadsheet_rows")
+        .delete()
+        .eq("document_id", doc.id)
+        .eq("user_id", user.id);
+      await supabaseAdmin
+        .from("spreadsheet_sheets")
+        .delete()
+        .eq("document_id", doc.id)
+        .eq("user_id", user.id);
+    }
     await supabaseAdmin
       .from("documents")
       .update({ status: "failed" })

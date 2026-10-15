@@ -75,7 +75,10 @@ uploading it. Excel uploads are also capped at 10,000 populated rows and
 500,000 extracted characters, even when XLSX compression keeps the source
 below 4 MiB. Excel formatting and media are removed during optimization; cell
 values, sheet names, row numbers, formulas, and cached formula results are
-indexed. A trimmed upload also sends `trimmedUnit`, `includedCount`, and
+indexed. New Excel uploads also store typed worksheet metadata and populated
+rows for deterministic filtering and aggregation. Workbooks uploaded before
+the structured-query release must be re-uploaded to use calculations. A
+trimmed upload also sends `trimmedUnit`, `includedCount`, and
 `sourceCount` multipart fields; inconsistent metadata returns
 `400 { "error": "Invalid trim metadata" }`.
 
@@ -109,6 +112,13 @@ Body: `{ message: string, sessionId: string }`
 Response: `{ answer: string, sources: { documentName: string, chunkText: string, score: number }[] }`
 Requires auth: `401 { error: string }` with no valid session.
 
+Internally, the chat agent uses semantic `search_notes` for narrative questions
+and structured spreadsheet tools for exhaustive Excel operations. Supported
+structured operations include sums, counts, distinct counts, averages,
+minimums, maximums, grouped results, filters, and bounded row display. These
+tools scan every retained typed row and return their calculation as the same
+existing source shape, so the public response contract does not change.
+
 ### `POST /api/spreadsheets/classify-departments`
 
 Body:
@@ -134,7 +144,12 @@ Body:
 The endpoint retrieves relevant passages belonging to the authenticated user
 and returns a validated file payload. Excel responses contain worksheet names
 and cell rows; PDF and Markdown responses contain Markdown document content.
-The browser converts that payload into the final downloadable file.
+For a workbook derived from an uploaded Excel file, the model produces a
+validated multi-sheet export plan and the server fills it using exhaustive,
+user-scoped structured queries. Row exports are not limited to semantic search
+matches or the interactive query display limit. Summary sheets can contain
+deterministic sums, counts, distinct counts, averages, minimums, and maximums.
+The browser converts the resulting payload into the final downloadable file.
 
 Response:
 `{ format: "xlsx", name: string, sheets: { name: string, rows: (string | number | boolean | null)[][] }[] }`

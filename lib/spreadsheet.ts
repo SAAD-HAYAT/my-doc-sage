@@ -18,6 +18,11 @@ export interface SpreadsheetCell {
   column: number;
   address: string;
   text: string;
+  valueType: "text" | "number" | "date" | "boolean" | "error" | "formula";
+  numericValue?: string;
+  dateValue?: string;
+  booleanValue?: boolean;
+  formula?: string;
 }
 
 export interface SpreadsheetRow {
@@ -26,6 +31,39 @@ export interface SpreadsheetRow {
   rowNumber: number;
   cells: SpreadsheetCell[];
   headers: SpreadsheetCell[];
+}
+
+export interface StructuredSpreadsheetColumn {
+  column: number;
+  letter: string;
+  header: string;
+  headerKey: string;
+  valueTypes: SpreadsheetCell["valueType"][];
+}
+
+export interface StructuredSpreadsheetSheet {
+  sheetName: string;
+  sheetState: WorksheetState;
+  headerRowNumber: number;
+  columns: StructuredSpreadsheetColumn[];
+  populatedRowCount: number;
+}
+
+export interface StructuredSpreadsheetCell extends SpreadsheetCell {
+  header: string | null;
+  headerKey: string | null;
+}
+
+export interface StructuredSpreadsheetRow {
+  sheetName: string;
+  rowNumber: number;
+  cells: StructuredSpreadsheetCell[];
+}
+
+export interface ExtractedSpreadsheet {
+  text: string;
+  sheets: StructuredSpreadsheetSheet[];
+  rows: StructuredSpreadsheetRow[];
 }
 
 async function createWorkbook(): Promise<Workbook> {
@@ -37,34 +75,55 @@ function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function primitiveToText(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === "string") return compactWhitespace(value);
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (typeof value !== "object") return compactWhitespace(String(value));
+type CellDetails = Omit<SpreadsheetCell, "column" | "address">;
+
+function cellValueDetails(value: unknown): CellDetails {
+  if (value === null || value === undefined) return { text: "", valueType: "text" };
+  if (value instanceof Date) {
+    const dateValue = value.toISOString();
+    return { text: dateValue, valueType: "date", dateValue };
+  }
+  if (typeof value === "string") {
+    return { text: compactWhitespace(value), valueType: "text" };
+  }
+  if (typeof value === "number") {
+    return { text: String(value), valueType: "number", numericValue: String(value) };
+  }
+  if (typeof value === "boolean") {
+    return { text: String(value), valueType: "boolean", booleanValue: value };
+  }
+  if (typeof value !== "object") {
+    return { text: compactWhitespace(String(value)), valueType: "text" };
+  }
 
   const record = value as Record<string, unknown>;
   if (Array.isArray(record.richText)) {
-    return compactWhitespace(
-      record.richText
-        .map((part) =>
-          part && typeof part === "object" && "text" in part
-            ? String((part as { text: unknown }).text)
-            : "",
-        )
-        .join(""),
-    );
+    return {
+      text: compactWhitespace(
+        record.richText
+          .map((part) =>
+            part && typeof part === "object" && "text" in part
+              ? String((part as { text: unknown }).text)
+              : "",
+          )
+          .join(""),
+      ),
+      valueType: "text",
+    };
   }
 
   if (typeof record.hyperlink === "string") {
     const label = typeof record.text === "string" ? compactWhitespace(record.text) : "";
-    return label && label !== record.hyperlink
-      ? `${label} (${record.hyperlink})`
-      : record.hyperlink;
+    return {
+      text:
+        label && label !== record.hyperlink ? `${label} (${record.hyperlink})` : record.hyperlink,
+      valueType: "text",
+    };
   }
 
-  if (typeof record.error === "string") return record.error;
+  if (typeof record.error === "string") {
+    return { text: record.error, valueType: "error" };
+  }
 
   const formula =
     typeof record.formula === "string"
@@ -73,15 +132,26 @@ function primitiveToText(value: unknown): string {
         ? record.sharedFormula
         : null;
   if (formula) {
-    const result = primitiveToText(record.result);
-    return result ? `${result} (formula: =${formula})` : `Formula: =${formula}`;
+    const result = cellValueDetails(record.result);
+    return result.text
+      ? { ...result, text: `${result.text} (formula: =${formula})`, formula }
+      : { text: `Formula: =${formula}`, valueType: "formula", formula };
   }
 
-  return "";
+  return { text: "", valueType: "text" };
 }
 
 export function spreadsheetCellValueToText(value: CellValue): string {
-  return primitiveToText(value);
+  return cellValueDetails(value).text;
+}
+
+export function normalizeSpreadsheetHeader(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 export function isExcelFile(file: Pick<File, "name">): boolean {
@@ -106,9 +176,9 @@ function collectRowsFromWorkbook(workbook: Workbook): SpreadsheetRow[] {
         // A merged cell's non-master entries repeat the master's value. Keeping
         // only the master avoids indexing the same text once per merged column.
         if (cell.isMerged && cell.master.address !== cell.address) return;
-        const text = spreadsheetCellValueToText(cell.value);
-        if (!text) return;
-        cells.push({ column, address: cell.address, text });
+        const details = cellValueDetails(cell.value);
+        if (!details.text) return;
+        cells.push({ column, address: cell.address, ...details });
       });
       if (cells.length > 0) {
         sheetRows.push({
@@ -128,6 +198,63 @@ function collectRowsFromWorkbook(workbook: Workbook): SpreadsheetRow[] {
   }
 
   return rows;
+}
+
+export function structureSpreadsheetRows(rows: SpreadsheetRow[]): {
+  sheets: StructuredSpreadsheetSheet[];
+  rows: StructuredSpreadsheetRow[];
+} {
+  const sheets: StructuredSpreadsheetSheet[] = [];
+  const structuredRows: StructuredSpreadsheetRow[] = [];
+  const rowsBySheet = new Map<string, SpreadsheetRow[]>();
+
+  for (const row of rows) {
+    const existing = rowsBySheet.get(row.sheetName);
+    if (existing) existing.push(row);
+    else rowsBySheet.set(row.sheetName, [row]);
+  }
+
+  for (const [sheetName, sheetRows] of rowsBySheet) {
+    const firstRow = sheetRows[0];
+    const headerRowNumber = firstRow.rowNumber;
+    const headerByColumn = new Map(firstRow.headers.map((cell) => [cell.column, cell.text]));
+    const valueTypes = new Map<number, Set<SpreadsheetCell["valueType"]>>();
+
+    for (const row of sheetRows) {
+      if (row.rowNumber === headerRowNumber) continue;
+      const cells = row.cells.map((cell): StructuredSpreadsheetCell => {
+        const header = headerByColumn.get(cell.column) ?? null;
+        let types = valueTypes.get(cell.column);
+        if (!types) {
+          types = new Set();
+          valueTypes.set(cell.column, types);
+        }
+        types.add(cell.valueType);
+        return {
+          ...cell,
+          header,
+          headerKey: header ? normalizeSpreadsheetHeader(header) : null,
+        };
+      });
+      structuredRows.push({ sheetName, rowNumber: row.rowNumber, cells });
+    }
+
+    sheets.push({
+      sheetName,
+      sheetState: firstRow.sheetState,
+      headerRowNumber,
+      columns: firstRow.headers.map((header) => ({
+        column: header.column,
+        letter: header.address.replace(/\d+$/, ""),
+        header: header.text,
+        headerKey: normalizeSpreadsheetHeader(header.text),
+        valueTypes: [...(valueTypes.get(header.column) ?? new Set())].sort(),
+      })),
+      populatedRowCount: Math.max(0, sheetRows.length - 1),
+    });
+  }
+
+  return { sheets, rows: structuredRows };
 }
 
 export async function readSpreadsheetRows(
@@ -192,6 +319,13 @@ export async function extractSpreadsheetText(
   bytes: ArrayBuffer | Uint8Array,
   limits: SpreadsheetLimits = DEFAULT_SPREADSHEET_LIMITS,
 ): Promise<string> {
+  return (await extractSpreadsheet(bytes, limits)).text;
+}
+
+export async function extractSpreadsheet(
+  bytes: ArrayBuffer | Uint8Array,
+  limits: SpreadsheetLimits = DEFAULT_SPREADSHEET_LIMITS,
+): Promise<ExtractedSpreadsheet> {
   const rows = await readSpreadsheetRows(bytes);
   if (rows.length === 0) throw new Error("No extractable cell values found in the workbook");
   const includedRows = semanticPrefixLength(rows, limits);
@@ -200,7 +334,10 @@ export async function extractSpreadsheetText(
       `Workbook exceeds the safe ingestion limit (${limits.maxRows.toLocaleString("en-US")} rows or ${limits.maxTextCharacters.toLocaleString("en-US")} extracted characters). Upload it through the app so it can be trimmed safely.`,
     );
   }
-  return rows.map(formatSpreadsheetRow).join("\n\n");
+  return {
+    text: rows.map(formatSpreadsheetRow).join("\n\n"),
+    ...structureSpreadsheetRows(rows),
+  };
 }
 
 async function serializeRowPrefix(rows: SpreadsheetRow[], count: number): Promise<Uint8Array> {

@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import {
+  extractSpreadsheet,
   extractSpreadsheetText,
   readSpreadsheetRows,
   spreadsheetCellValueToText,
@@ -52,6 +53,37 @@ describe("Excel workbook extraction", () => {
     expect(text).toContain('B4 / "Revenue"="OpenAI (https://openai.com)"');
     expect(text).toContain('Worksheet "Lookup" (hidden), row 2');
     expect(text).toContain('A2 / "Code"="true"');
+  });
+
+  it("preserves typed rows and cached formula results for structured queries", async () => {
+    const extracted = await extractSpreadsheet(await workbookBytes());
+
+    expect(extracted.sheets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sheetName: "Sales",
+          headerRowNumber: 1,
+          populatedRowCount: 3,
+          columns: expect.arrayContaining([
+            expect.objectContaining({ header: "Revenue", headerKey: "revenue", letter: "B" }),
+          ]),
+        }),
+        expect.objectContaining({ sheetName: "Lookup", sheetState: "hidden" }),
+      ]),
+    );
+    const formula = extracted.rows.find((row) => row.rowNumber === 3)?.cells[0];
+    expect(formula).toMatchObject({
+      header: "Revenue",
+      headerKey: "revenue",
+      valueType: "number",
+      numericValue: "2500",
+      formula: "B2*2",
+    });
+    const published = extracted.rows.find((row) => row.rowNumber === 2)?.cells[2];
+    expect(published).toMatchObject({
+      valueType: "date",
+      dateValue: "2026-03-01T00:00:00.000Z",
+    });
   });
 
   it("rejects workbooks with no populated cells", async () => {

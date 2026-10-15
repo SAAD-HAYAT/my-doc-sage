@@ -22,12 +22,22 @@ describe("chat-triggered file generation", () => {
             ["Revenue", 100],
           ],
         },
+        {
+          name: "Details",
+          rows: [
+            ["Item", "Amount"],
+            ["A", 60],
+            ["B", 40],
+          ],
+        },
       ],
     });
     const excelBytes = await (await fetch(excel.url)).arrayBuffer();
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(excelBytes);
     expect(workbook.getWorksheet("Summary")?.getCell("B2").value).toBe(100);
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["Summary", "Details"]);
+    expect(workbook.getWorksheet("Details")?.getCell("B3").value).toBe(40);
 
     const pdf = await createDownloadableFile({
       format: "pdf",

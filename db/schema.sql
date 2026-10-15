@@ -68,6 +68,38 @@ alter table messages add column if not exists user_id uuid references auth.users
 create index if not exists messages_session_idx on messages (session_id, created_at);
 create index if not exists messages_user_id_idx on messages (user_id);
 
+-- Phase 12: typed workbook structure for deterministic spreadsheet queries.
+-- Text chunks remain the source for semantic retrieval; these tables preserve
+-- complete rows and typed values for exhaustive filters and calculations.
+create table if not exists spreadsheet_sheets (
+  id uuid primary key default gen_random_uuid(),
+  document_id uuid references documents(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  sheet_name text not null,
+  sheet_state text not null,
+  header_row_number integer not null,
+  columns jsonb not null,
+  populated_row_count integer not null,
+  created_at timestamptz not null default now(),
+  unique (document_id, sheet_name)
+);
+
+create table if not exists spreadsheet_rows (
+  id uuid primary key default gen_random_uuid(),
+  document_id uuid references documents(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  sheet_name text not null,
+  row_number integer not null,
+  cells jsonb not null,
+  created_at timestamptz not null default now(),
+  unique (document_id, sheet_name, row_number)
+);
+
+create index if not exists spreadsheet_sheets_user_document_idx
+  on spreadsheet_sheets (user_id, document_id);
+create index if not exists spreadsheet_rows_user_document_sheet_idx
+  on spreadsheet_rows (user_id, document_id, sheet_name, row_number);
+
 -- Phase 7: row level security, per-user ownership.
 --
 -- This is a BACKSTOP, not the only check -- application code (see
@@ -78,6 +110,8 @@ create index if not exists messages_user_id_idx on messages (user_id);
 alter table documents enable row level security;
 alter table chunks enable row level security;
 alter table messages enable row level security;
+alter table spreadsheet_sheets enable row level security;
+alter table spreadsheet_rows enable row level security;
 
 drop policy if exists "documents_owner_all" on documents;
 create policy "documents_owner_all" on documents
@@ -93,6 +127,18 @@ create policy "chunks_owner_all" on chunks
 
 drop policy if exists "messages_owner_all" on messages;
 create policy "messages_owner_all" on messages
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists "spreadsheet_sheets_owner_all" on spreadsheet_sheets;
+create policy "spreadsheet_sheets_owner_all" on spreadsheet_sheets
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists "spreadsheet_rows_owner_all" on spreadsheet_rows;
+create policy "spreadsheet_rows_owner_all" on spreadsheet_rows
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
@@ -119,7 +165,7 @@ drop function if exists hybrid_search(vector(1024), text, int);
 -- unused by application code (Phase 5 switched to hybrid_search below);
 -- kept and still user-scoped for reference/safety rather than left as a
 -- dangerous unscoped function sitting in the database.
-create function match_chunks(
+create or replace function match_chunks(
   query_embedding vector(1024),
   p_user_id uuid,
   match_count int default 5
@@ -167,7 +213,7 @@ $$;
 -- rewriting its '&' to '|' and re-parsing with to_tsquery is a safe,
 -- standard way to turn it into an OR query without re-exposing raw user
 -- input to tsquery's operator syntax.
-create function hybrid_search(
+create or replace function hybrid_search(
   query_embedding vector(1024),
   query_text text,
   p_user_id uuid,

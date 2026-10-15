@@ -6,13 +6,35 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // env check execute for real.
 vi.mock("@/lib/retrieval", () => ({ retrieve: vi.fn() }));
 vi.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: vi.fn() } }));
+vi.mock("@/lib/spreadsheet-query", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/spreadsheet-query")>();
+  return {
+    ...original,
+    inspectSpreadsheets: vi.fn(),
+    querySpreadsheet: vi.fn(),
+  };
+});
 
 import { retrieve } from "@/lib/retrieval";
 import { supabaseAdmin } from "@/lib/supabase";
-import { executeTool, listDocumentsTool, searchNotesTool, tools } from "@/lib/tools";
+import {
+  inspectSpreadsheets,
+  querySpreadsheet,
+  SpreadsheetQueryInputError,
+} from "@/lib/spreadsheet-query";
+import {
+  executeTool,
+  inspectSpreadsheetTool,
+  listDocumentsTool,
+  querySpreadsheetTool,
+  searchNotesTool,
+  tools,
+} from "@/lib/tools";
 
 const mockRetrieve = vi.mocked(retrieve);
 const mockFrom = vi.mocked(supabaseAdmin.from);
+const mockInspectSpreadsheets = vi.mocked(inspectSpreadsheets);
+const mockQuerySpreadsheet = vi.mocked(querySpreadsheet);
 
 const TEST_USER_ID = "test-user-id";
 
@@ -35,9 +57,16 @@ describe("tool schemas", () => {
     expect(listDocumentsTool.function.parameters.properties).toEqual({});
   });
 
-  it("tools exports both, in a stable order, ready for chat()'s tools param", () => {
-    expect(tools).toHaveLength(2);
-    expect(tools.map((t) => t.function.name)).toEqual(["search_notes", "list_documents"]);
+  it("exports semantic and structured spreadsheet tools in a stable order", () => {
+    expect(inspectSpreadsheetTool.function.name).toBe("inspect_spreadsheet");
+    expect(querySpreadsheetTool.function.name).toBe("query_spreadsheet");
+    expect(tools).toHaveLength(4);
+    expect(tools.map((t) => t.function.name)).toEqual([
+      "search_notes",
+      "list_documents",
+      "inspect_spreadsheet",
+      "query_spreadsheet",
+    ]);
     for (const t of tools) {
       expect(t.type).toBe("function");
       expect(typeof t.function.description).toBe("string");
@@ -76,12 +105,17 @@ describe("executeTool", () => {
 
   it("search_notes: rejects a missing/empty query without calling retrieve()", async () => {
     await expect(executeTool("search_notes", {}, TEST_USER_ID)).rejects.toThrow(/query/i);
-    await expect(executeTool("search_notes", { query: "   " }, TEST_USER_ID)).rejects.toThrow(/query/i);
+    await expect(executeTool("search_notes", { query: "   " }, TEST_USER_ID)).rejects.toThrow(
+      /query/i,
+    );
     expect(mockRetrieve).not.toHaveBeenCalled();
   });
 
   it("list_documents: queries the documents table scoped to the caller's user_id -- no embedding/chat cost", async () => {
-    const { select, eq } = mockDocumentsQuery({ data: [{ name: "a.pdf", status: "ready" }], error: null });
+    const { select, eq } = mockDocumentsQuery({
+      data: [{ name: "a.pdf", status: "ready" }],
+      error: null,
+    });
 
     const result = await executeTool("list_documents", {}, TEST_USER_ID);
 
@@ -95,13 +129,64 @@ describe("executeTool", () => {
   it("list_documents: surfaces a DB error with a descriptive message", async () => {
     mockDocumentsQuery({ data: null, error: { message: "relation missing" } });
 
-    await expect(executeTool("list_documents", {}, TEST_USER_ID)).rejects.toThrow(/relation missing/);
+    await expect(executeTool("list_documents", {}, TEST_USER_ID)).rejects.toThrow(
+      /relation missing/,
+    );
   });
 
   it("list_documents: an empty table returns an empty array, not null/undefined", async () => {
     mockDocumentsQuery({ data: null, error: null });
 
     expect(await executeTool("list_documents", {}, TEST_USER_ID)).toEqual([]);
+  });
+
+  it("inspect_spreadsheet and query_spreadsheet remain explicitly user-scoped", async () => {
+    mockInspectSpreadsheets.mockResolvedValue({ documents: [] });
+    mockQuerySpreadsheet.mockResolvedValue({
+      ok: true,
+      operation: "sum",
+      column: "expenses",
+      filters: [],
+      worksheets: ["Sheet1"],
+      matchedRowCount: 2,
+      evidence: [],
+      evidenceTruncated: false,
+      value: "30",
+      formattedValue: "30",
+      numericValueCount: 2,
+      skippedNonNumeric: 0,
+      documentName: "data.xlsx",
+      uploadedAt: "2026-10-15",
+      scope: { trimmed: false },
+    });
+
+    await executeTool("inspect_spreadsheet", { documentName: "data.xlsx" }, TEST_USER_ID);
+    await executeTool(
+      "query_spreadsheet",
+      { documentName: "data.xlsx", operation: "sum", column: "expenses" },
+      TEST_USER_ID,
+    );
+
+    expect(mockInspectSpreadsheets).toHaveBeenCalledWith(TEST_USER_ID, "data.xlsx");
+    expect(mockQuerySpreadsheet).toHaveBeenCalledWith(TEST_USER_ID, {
+      documentName: "data.xlsx",
+      operation: "sum",
+      column: "expenses",
+    });
+  });
+
+  it("returns recoverable spreadsheet query errors to the model", async () => {
+    mockQuerySpreadsheet.mockRejectedValue(
+      new SpreadsheetQueryInputError("legacy.xlsx must be re-uploaded"),
+    );
+
+    await expect(
+      executeTool(
+        "query_spreadsheet",
+        { documentName: "legacy.xlsx", operation: "count" },
+        TEST_USER_ID,
+      ),
+    ).resolves.toEqual({ ok: false, error: "legacy.xlsx must be re-uploaded" });
   });
 
   it("throws a clear, specific error for an unknown tool name -- doesn't crash", async () => {

@@ -23,6 +23,40 @@ export type AgentResult = {
   groundednessWarning?: boolean;
 };
 
+type SpreadsheetToolResult = {
+  ok: true;
+  documentName: string;
+  operation: string;
+  column: string | null;
+  matchedRowCount: number;
+  evidence: { sheetName: string; rowNumber: number; address?: string }[];
+  evidenceTruncated: boolean;
+  value?: string;
+  groups?: unknown;
+  rows?: unknown;
+  scope: { trimmed: boolean; unit?: string; included?: number; total?: number };
+};
+
+function spreadsheetResultSource(result: SpreadsheetToolResult): RetrievedChunk {
+  const evidence = result.evidence
+    .map((item) => `${item.sheetName}!${item.address ?? `row ${item.rowNumber}`}`)
+    .join(", ");
+  const resultValue =
+    result.value ??
+    JSON.stringify(result.groups ?? result.rows ?? "grouped or row result").slice(0, 2_000);
+  const scope = result.scope.trimmed
+    ? `; source trimmed to ${result.scope.unit} 1–${result.scope.included} of ${result.scope.total}`
+    : "; source includes all uploaded rows";
+  return {
+    documentName: result.documentName,
+    chunkText:
+      `Structured spreadsheet query: ${result.operation} ${result.column ?? "rows"}; ` +
+      `matched ${result.matchedRowCount} row(s); result ${resultValue}${scope}; ` +
+      `evidence ${evidence || "no matching rows"}${result.evidenceTruncated ? " (truncated display; calculation used all matches)" : ""}.`,
+    score: 1,
+  };
+}
+
 // Phase 5, citations: the model needs to know it should cite [1], [2], etc.
 // This lives here rather than in app/api/chat/route.ts's SYSTEM_PROMPT
 // (Phase 5's file scope is retrieval/agent/db/tests, not the route) --
@@ -39,9 +73,9 @@ const CITATION_INSTRUCTION: ChatMessage = {
   role: "system",
   content:
     "When search_notes returns passages, they arrive as a JSON array -- cite them inline in your " +
-    "answer as [1], [2], etc., using that array's order (its first element is [1], second is [2], " +
-    "and so on; this is the same order the passages are shown to the user as sources). Cite every " +
-    "passage your answer actually relies on, and don't cite ones you didn't use.",
+    "answer as [1], [2], etc., using that array's order. query_spreadsheet returns a citation field " +
+    "for its deterministic calculation; use that citation for the resulting value. These are the " +
+    "same sources shown to the user. Cite every source your answer relies on and no others.",
 };
 
 // Inserted after any leading system message(s) (route.ts's own prompt),
@@ -82,7 +116,10 @@ function conversationTurns(messages: ChatMessage[]): ChatMessage[] {
   return messages.filter((m) => m.role === "user" || m.role === "assistant");
 }
 
-async function rewriteQuery(history: ChatMessage[], currentMessage: string): Promise<string | null> {
+async function rewriteQuery(
+  history: ChatMessage[],
+  currentMessage: string,
+): Promise<string | null> {
   const rewriteMessages: ChatMessage[] = [
     { role: "system", content: REWRITE_SYSTEM_PROMPT },
     ...history,
@@ -137,10 +174,7 @@ async function withRewrittenQueryHint(messages: ChatMessage[]): Promise<ChatMess
   return [...messages.slice(0, -1), hint, messages[messages.length - 1]];
 }
 
-function summarizeToolResult(
-  name: string,
-  result: RetrievedChunk[] | DocumentSummary[],
-): string {
+function summarizeToolResult(name: string, result: unknown): string {
   if (name === "search_notes") {
     const chunks = result as RetrievedChunk[];
     if (chunks.length === 0) return "0 chunks";
@@ -150,6 +184,20 @@ function summarizeToolResult(
   if (name === "list_documents") {
     const docs = result as DocumentSummary[];
     return `${docs.length} document(s): ${docs.map((d) => `${d.name}(${d.status})`).join(", ")}`;
+  }
+  if (name === "inspect_spreadsheet") {
+    const documents = (result as { documents?: unknown[] }).documents ?? [];
+    return `${documents.length} spreadsheet document(s) inspected`;
+  }
+  if (name === "query_spreadsheet") {
+    const query = result as {
+      ok?: boolean;
+      error?: string;
+      matchedRowCount?: number;
+      operation?: string;
+    };
+    if (query.ok === false) return `query rejected: ${query.error ?? "invalid query"}`;
+    return `${query.operation ?? "query"} matched ${query.matchedRowCount ?? 0} row(s)`;
   }
   return JSON.stringify(result).slice(0, 100);
 }
@@ -168,10 +216,7 @@ function summarizeToolResult(
 // list_documents), there's no retrieved context to check the answer
 // against, so the check is skipped entirely rather than checking
 // against nothing.
-async function checkGroundedness(
-  answer: string,
-  sources: RetrievedChunk[],
-): Promise<boolean> {
+async function checkGroundedness(answer: string, sources: RetrievedChunk[]): Promise<boolean> {
   if (sources.length === 0) return false;
 
   const context = sources
@@ -207,7 +252,9 @@ async function checkGroundedness(
   const unsupported = normalized.includes("unsupported");
 
   if (unsupported) {
-    console.warn(`[agent] groundedness self-check flagged this answer as unsupported: "${answer.slice(0, 160)}"`);
+    console.warn(
+      `[agent] groundedness self-check flagged this answer as unsupported: "${answer.slice(0, 160)}"`,
+    );
   }
 
   return unsupported;
@@ -261,9 +308,16 @@ export async function runAgentLoop(
       }
 
       const result = await executeTool(call.function.name, args, userId);
+      let toolOutput = result;
 
       if (call.function.name === "search_notes") {
         sources = result as RetrievedChunk[];
+      } else if (
+        call.function.name === "query_spreadsheet" &&
+        (result as { ok?: unknown })?.ok === true
+      ) {
+        sources = [spreadsheetResultSource(result as SpreadsheetToolResult)];
+        toolOutput = { ...(result as object), citation: "[1]" };
       }
 
       console.log(
@@ -273,14 +327,16 @@ export async function runAgentLoop(
       toolResultMessages.push({
         role: "tool",
         tool_call_id: call.id,
-        content: JSON.stringify(result),
+        content: JSON.stringify(toolOutput),
       });
     }
 
     messages = [...messages, assistantMessage, ...toolResultMessages];
   }
 
-  console.warn(`[agent] hit the ${MAX_ITERATIONS}-iteration cap without a final answer; returning fallback.`);
+  console.warn(
+    `[agent] hit the ${MAX_ITERATIONS}-iteration cap without a final answer; returning fallback.`,
+  );
   return {
     answer: "I couldn't find a confident answer in your notes for this question.",
     sources,
